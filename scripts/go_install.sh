@@ -1,9 +1,7 @@
 #!/bin/bash
 #
-# 自动下载并安装 MySQL
-# 安装路径：/opt/mysql (软链，指向实际版本目录)
-# 数据目录：/data
-# 用法：sudo ./install_mysql.sh 8.4.5
+# 自动下载并安装 Golang
+# 用法：sudo ./go_install.sh 1.25.3
 
 set -e
 
