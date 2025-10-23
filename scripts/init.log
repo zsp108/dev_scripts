@@ -1,0 +1,18 @@
+2025-10-23 15:41:03  main [line:40] error:请以 root 执行此脚本
+2025-10-23 15:41:17  main [line:53] info:检测到sudo执行，原始用户: spz, 原始家目录: /home/spz
+2025-10-23 15:41:17  main [line:74] info:检测到系统架构: x86_64
+2025-10-23 15:41:17  main [line:75] info:检测到操作系统: ubuntu 24.04
+2025-10-23 15:41:17  main [line:86] info:安装包下载报名：go1.25.3.linux-amd64.tar.gz
+2025-10-23 15:41:17  main [line:87] info:安装包下载链接：https://golang.google.cn/dl/go1.25.3.linux-amd64.tar.gz
+2025-10-23 15:41:17  main [line:93] info:准备下载 x86_64 版... https://golang.google.cn/dl/go1.25.3.linux-amd64.tar.gz
+2025-10-23 15:41:48  configure_bashrc main [line:148] info:已添加 Go 环境变量配置到 /root/.bashrc
+2025-10-23 15:41:48  main [line:158] info:为原始用户 spz 配置环境变量...
+2025-10-23 15:41:48  configure_bashrc main [line:148] info:已添加 Go 环境变量配置到 /home/spz/.bashrc
+2025-10-23 15:41:49  main [line:164] info:已将 /home/spz/go 目录所有权赋予 spz
+2025-10-23 15:41:49  main [line:170] info:已将 /home/spz/workspace 目录所有权赋予 spz
+2025-10-23 15:41:49  main [line:174] info:确保Go安装目录权限正确...
+2025-10-23 15:41:49  main [line:188] info:验证 Go 安装...
+2025-10-23 15:41:49  main [line:200] info:Go 版本验证成功: go1.25.3
+2025-10-23 15:41:49  main [line:213] info:Golang 安装成功！
+2025-10-23 15:41:49  main [line:214] info:请执行 'source ~/.bashrc' 或重新登录以加载环境变量
+2025-10-23 15:41:49  main [line:216] info:原始用户 spz 的环境变量已配置，请重新登录以生效
