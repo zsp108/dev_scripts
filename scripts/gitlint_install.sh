@@ -125,7 +125,7 @@ function install_go_gitlint() {
     # 验证安装
     if command -v gitlint &> /dev/null; then
         log "info" "go-gitlint安装成功"
-        gitlint --version
+        gitlint --help
     else
         log "error" "go-gitlint安装失败"
         return 1
