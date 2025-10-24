@@ -29,7 +29,7 @@ help: ## Show this help message
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  $(YELLOW)%-15s$(NC) %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 	@printf "\n$(GREEN)Examples:$(NC)\n"
 	@printf "  make install          # Install all tools\n"
-	@printf "  make install-go       # Install Go $(GO_VERSION)\n"
+	@printf "  make install-go       # Install Go $(GO_VERSION) or GO_VERSION=1.25.3 \n"
 	@printf "  make gitlint          # Validate commit messages\n"
 	@printf "  make check            # Check installations\n"
 
