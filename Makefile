@@ -206,24 +206,14 @@ pre-commit: ## Install pre-commit hook for code quality checks
 
 commit-msg: ## Install commit-msg hook for commit message validation
 	@printf "$(BLUE)Setting up commit-msg hook...$(NC)\n"
-	@echo "#!/bin/bash" > .git/hooks/commit-msg
-	@echo "# Commit-msg hook for validating commit messages" >> .git/hooks/commit-msg
-	@echo "commit_msg=\"\$$1\"" >> .git/hooks/commit-msg
-	@echo "if [ -f \"\$$commit_msg\" ]; then" >> .git/hooks/commit-msg
-	@echo "    message=\$$(cat \"\$$commit_msg\")" >> .git/hooks/commit-msg
-	@echo "    printf \"\033[0;34mValidating commit message...\033[0m\\n\"" >> .git/hooks/commit-msg
-	@echo "    echo \"\$$message\" | grep -qE \"$(GITLINT_REGEX)\" || {" >> .git/hooks/commit-msg
-	@echo "        printf \"\033[0;31m✗ Commit message validation failed!\033[0m\\n\"" >> .git/hooks/commit-msg
-	@echo "        printf \"\033[1;33mExpected format: <type>(<scope>): <description>\033[0m\\n\"" >> .git/hooks/commit-msg
-	@echo "        printf \"\033[1;33mTypes: feat, fix, docs, style, refactor, test, chore, ci, perf\033[0m\\n\"" >> .git/hooks/commit-msg
-	@echo "        printf \"\033[1;33mExamples: feat: add new feature\033[0m\\n\"" >> .git/hooks/commit-msg
-	@echo "        printf \"\033[1;33m          fix(ui): resolve button alignment\033[0m\\n\"" >> .git/hooks/commit-msg
-	@echo "        exit 1" >> .git/hooks/commit-msg
-	@echo "    }" >> .git/hooks/commit-msg
-	@echo "    printf \"\033[0;32m✓ Commit message validation passed!\033[0m\\n\"" >> .git/hooks/commit-msg
-	@echo "fi" >> .git/hooks/commit-msg
-	@chmod +x .git/hooks/commit-msg
-	@printf "$(GREEN)✓ Commit-msg hook installed$(NC)\n"
+	@if [ -f "$(SCRIPTS_DIR)/templates/commit-msg.sample" ]; then \
+		cp "$(SCRIPTS_DIR)/templates/commit-msg.sample" .git/hooks/commit-msg; \
+		chmod +x .git/hooks/commit-msg; \
+		printf "$(GREEN)✓ Commit-msg hook installed from template$(NC)\n"; \
+	else \
+		printf "$(RED)Error: Commit-msg template not found at $(SCRIPTS_DIR)/templates/commit-msg.sample$(NC)\n"; \
+		exit 1; \
+	fi
 
 install-hooks: pre-commit commit-msg ## Install all git hooks (pre-commit and commit-msg)
 	@printf "$(GREEN)✓ All git hooks installed successfully!$(NC)\n"

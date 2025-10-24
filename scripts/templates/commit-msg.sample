@@ -1,0 +1,32 @@
+#!/bin/bash
+
+# Commit message hook to validate commit message format
+# Called by "git commit" with one argument, the name of the file
+# that has the commit message.
+
+COMMIT_MSG_FILE="$1"
+COMMIT_MSG=$(cat "$COMMIT_MSG_FILE")
+
+# Gitlint configuration - same as in Makefile
+GITLINT_REGEX="^(feat|fix|docs|style|refactor|test|chore|ci|perf)(\([a-zA-Z0-9-_/]+\))?:\s.*"
+
+# Function to print colored output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# Check if commit message matches the expected format
+if ! echo "$COMMIT_MSG" | grep -qE "^(feat|fix|docs|style|refactor|test|chore|ci|perf)(\([a-zA-Z0-9_-]+\))?:\s*.+"; then
+    printf "${RED}✗ Commit message validation failed!${NC}\n"
+    printf "${YELLOW}Expected format: <type>(<scope>): <description>${NC}\n"
+    printf "${YELLOW}Types: feat, fix, docs, style, refactor, test, chore, ci, perf${NC}\n"
+    printf "${YELLOW}Examples:${NC}\n"
+    printf "${YELLOW}  feat: add new feature${NC}\n"
+    printf "${YELLOW}  fix(ui): resolve button alignment issue${NC}\n"
+    printf "${YELLOW}  docs: update installation guide${NC}\n"
+    printf "${YELLOW}  refactor(auth): simplify login flow${NC}\n"
+    exit 1
+fi
+
+printf "${GREEN}✓ Commit message validation passed!${NC}\n"
