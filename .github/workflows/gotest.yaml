@@ -30,9 +30,9 @@ jobs:
     - uses: actions/checkout@v4
       with:
         fetch-depth: 0  # 🔹 确保 Git 历史完整
-
-    - name: env check
-      run: make check
     
     - name: install all 
       run: make install
+
+    - name: env check
+      run: make check
