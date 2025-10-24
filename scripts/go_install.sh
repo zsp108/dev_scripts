@@ -34,8 +34,16 @@ function log {
     }
 }
 
+# 检查用户权限
 if [ "$EUID" -ne 0 ]; then
-  log error "请以 root 或者sudo 命令执行此脚本"
+    # 非root用户，检查是否有sudo权限
+    if ! sudo -n true 2>/dev/null; then
+        log error "当前用户没有sudo权限，请以root用户或使用sudo命令执行此脚本"
+    else
+        log info "检测到非root用户但有sudo权限，继续执行..."
+    fi
+else
+    log info "检测到root用户执行，继续执行..."
 fi
 
 if [ -z "$1" ]; then
