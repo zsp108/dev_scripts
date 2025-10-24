@@ -22,7 +22,7 @@ jobs:
       run: git fetch --prune  # ✅ 移除 --unshallow，避免错误
     
     - name: gitlint
-      run: cp scripts/gitlint_ub_x86-64 /usr/local/bin/gitlint && make check
+      run: cp scripts/gitlint_ub_x86-64 /usr/local/bin/gitlint && make gitlint
 
   build:
     runs-on: ubuntu-latest
