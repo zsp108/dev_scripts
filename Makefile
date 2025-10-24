@@ -19,7 +19,7 @@ YELLOW := \033[1;33m
 BLUE := \033[0;34m
 NC := \033[0m # No Color
 
-.PHONY: help install install-go install-gitlint setup gitlint check clean lint test docs
+.PHONY: help install install-go install-gitlint setup gitlint check clean lint test docs pre-commit commit-msg install-hooks remove-hooks
 
 # Default target
 help: ## Show this help message
@@ -194,12 +194,44 @@ ci-setup: ## Setup for CI/CD environments
 	@echo 'export PATH=$$HOME/.local/bin:$$PATH' >> ~/.bashrc
 	@export PATH=$$HOME/.local/bin:$$PATH
 
-pre-commit: # install-gitlint ## Pre-commit hook setup
+pre-commit: ## Install pre-commit hook for code quality checks
 	@printf "$(BLUE)Setting up pre-commit hook...$(NC)\n"
 	@echo "#!/bin/bash" > .git/hooks/pre-commit
-	@echo "make gitlint" >> .git/hooks/pre-commit
+	@echo "# Pre-commit hook for code quality checks" >> .git/hooks/pre-commit
+	@echo "printf \"\033[0;34mRunning pre-commit checks...\033[0m\\n\"" >> .git/hooks/pre-commit
+	@echo "make gitlint || exit 1" >> .git/hooks/pre-commit
+	@echo "printf \"\033[0;32m✓ Pre-commit checks passed!\033[0m\\n\"" >> .git/hooks/pre-commit
 	@chmod +x .git/hooks/pre-commit
 	@printf "$(GREEN)✓ Pre-commit hook installed$(NC)\n"
+
+commit-msg: ## Install commit-msg hook for commit message validation
+	@printf "$(BLUE)Setting up commit-msg hook...$(NC)\n"
+	@echo "#!/bin/bash" > .git/hooks/commit-msg
+	@echo "# Commit-msg hook for validating commit messages" >> .git/hooks/commit-msg
+	@echo "commit_msg=\"\$$1\"" >> .git/hooks/commit-msg
+	@echo "if [ -f \"\$$commit_msg\" ]; then" >> .git/hooks/commit-msg
+	@echo "    message=\$$(cat \"\$$commit_msg\")" >> .git/hooks/commit-msg
+	@echo "    printf \"\033[0;34mValidating commit message...\033[0m\\n\"" >> .git/hooks/commit-msg
+	@echo "    echo \"\$$message\" | grep -qE \"$(GITLINT_REGEX)\" || {" >> .git/hooks/commit-msg
+	@echo "        printf \"\033[0;31m✗ Commit message validation failed!\033[0m\\n\"" >> .git/hooks/commit-msg
+	@echo "        printf \"\033[1;33mExpected format: <type>(<scope>): <description>\033[0m\\n\"" >> .git/hooks/commit-msg
+	@echo "        printf \"\033[1;33mTypes: feat, fix, docs, style, refactor, test, chore, ci, perf\033[0m\\n\"" >> .git/hooks/commit-msg
+	@echo "        printf \"\033[1;33mExamples: feat: add new feature\033[0m\\n\"" >> .git/hooks/commit-msg
+	@echo "        printf \"\033[1;33m          fix(ui): resolve button alignment\033[0m\\n\"" >> .git/hooks/commit-msg
+	@echo "        exit 1" >> .git/hooks/commit-msg
+	@echo "    }" >> .git/hooks/commit-msg
+	@echo "    printf \"\033[0;32m✓ Commit message validation passed!\033[0m\\n\"" >> .git/hooks/commit-msg
+	@echo "fi" >> .git/hooks/commit-msg
+	@chmod +x .git/hooks/commit-msg
+	@printf "$(GREEN)✓ Commit-msg hook installed$(NC)\n"
+
+install-hooks: pre-commit commit-msg ## Install all git hooks (pre-commit and commit-msg)
+	@printf "$(GREEN)✓ All git hooks installed successfully!$(NC)\n"
+
+remove-hooks: ## Remove installed git hooks
+	@printf "$(BLUE)Removing git hooks...$(NC)\n"
+	@rm -f .git/hooks/pre-commit .git/hooks/commit-msg
+	@printf "$(GREEN)✓ Git hooks removed$(NC)\n"
 
 # Custom gitlint regex helper
 show-regex: ## Show the gitlint regex pattern
