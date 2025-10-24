@@ -33,3 +33,6 @@ jobs:
 
     - name: env check
       run: make check
+    
+    - name: install all 
+      run: make install
