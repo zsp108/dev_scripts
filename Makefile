@@ -10,6 +10,7 @@ GIT_INSTALL_SCRIPT := $(SCRIPTS_DIR)/git_install.sh
 DOCKER_INSTALL_SCRIPT := $(SCRIPTS_DIR)/docker_install.sh
 GITLINT_BINARY := $(SCRIPTS_DIR)/gitlint_ub_x86-64
 GO_VERSION ?= 1.23.2
+GIT_VERSION ?= 2.43.0
 
 # Gitlint configuration
 GITLINT_REGEX := ^(feat|fix|docs|style|refactor|test|chore|ci|perf)(\([a-zA-Z0-9-_/]+\))?:.+
@@ -63,7 +64,7 @@ install-git: ## Install Git
 	@printf "$(BLUE)Installing Git...$(NC)\n"
 	@if [ -f $(GIT_INSTALL_SCRIPT) ]; then \
 		chmod +x $(GIT_INSTALL_SCRIPT); \
-		./$(GIT_INSTALL_SCRIPT); \
+		./$(GIT_INSTALL_SCRIPT) $(GIT_VERSION); \
 	else \
 		printf "$(RED)Error: Git install script not found at $(GIT_INSTALL_SCRIPT)$(NC)\n"; \
 		exit 1; \
