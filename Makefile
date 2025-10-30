@@ -10,7 +10,7 @@ GIT_INSTALL_SCRIPT := $(SCRIPTS_DIR)/git_install.sh
 DOCKER_INSTALL_SCRIPT := $(SCRIPTS_DIR)/docker_install.sh
 GITLINT_BINARY := $(SCRIPTS_DIR)/gitlint_ub_x86-64
 GO_VERSION ?= 1.23.2
-GIT_VERSION ?= 2.43.0
+GIT_VERSION ?= 2.51.0
 
 # Gitlint configuration
 GITLINT_REGEX := ^(feat|fix|docs|style|refactor|test|chore|ci|perf)(\([a-zA-Z0-9-_/]+\))?:.+
