@@ -6,6 +6,8 @@ SHELL := /bin/bash
 SCRIPTS_DIR := scripts
 GO_INSTALL_SCRIPT := $(SCRIPTS_DIR)/go_install.sh
 GITLINT_INSTALL_SCRIPT := $(SCRIPTS_DIR)/gitlint_install.sh
+GIT_INSTALL_SCRIPT := $(SCRIPTS_DIR)/git_install.sh
+DOCKER_INSTALL_SCRIPT := $(SCRIPTS_DIR)/docker_install.sh
 GITLINT_BINARY := $(SCRIPTS_DIR)/gitlint_ub_x86-64
 GO_VERSION ?= 1.23.2
 
@@ -19,7 +21,7 @@ YELLOW := \033[1;33m
 BLUE := \033[0;34m
 NC := \033[0m # No Color
 
-.PHONY: help install install-go install-gitlint setup gitlint check clean lint test docs pre-commit commit-msg install-hooks remove-hooks
+.PHONY: help install install-go install-git install-docker install-gitlint setup gitlint gitlint-all check clean lint test docs pre-commit commit-msg install-hooks remove-hooks list-scripts info version show-regex
 
 # Default target
 help: ## Show this help message
@@ -32,9 +34,10 @@ help: ## Show this help message
 	@printf "  make install-go       # Install Go $(GO_VERSION) or GO_VERSION=1.25.3 \n"
 	@printf "  make gitlint          # Validate commit messages\n"
 	@printf "  make check            # Check installations\n"
+	@printf "  make list-scripts     # List all available scripts\n"
 
 # Installation targets
-install: install-go install-gitlint ## Install all development tools
+install: install-go install-git install-docker install-gitlint ## Install all development tools
 
 install-go: ## Install Go programming language
 	@printf "$(BLUE)Installing Go $(GO_VERSION)...$(NC)\n"
@@ -53,6 +56,26 @@ install-gitlint: ## Install gitlint for commit message validation
 		./$(GITLINT_INSTALL_SCRIPT); \
 	else \
 		printf "$(RED)Error: gitlint install script not found at $(GITLINT_INSTALL_SCRIPT)$(NC)\n"; \
+		exit 1; \
+	fi
+
+install-git: ## Install Git
+	@printf "$(BLUE)Installing Git...$(NC)\n"
+	@if [ -f $(GIT_INSTALL_SCRIPT) ]; then \
+		chmod +x $(GIT_INSTALL_SCRIPT); \
+		./$(GIT_INSTALL_SCRIPT); \
+	else \
+		printf "$(RED)Error: Git install script not found at $(GIT_INSTALL_SCRIPT)$(NC)\n"; \
+		exit 1; \
+	fi
+
+install-docker: ## Install Docker
+	@printf "$(BLUE)Installing Docker...$(NC)\n"
+	@if [ -f $(DOCKER_INSTALL_SCRIPT) ]; then \
+		chmod +x $(DOCKER_INSTALL_SCRIPT); \
+		./$(DOCKER_INSTALL_SCRIPT); \
+	else \
+		printf "$(RED)Error: Docker install script not found at $(DOCKER_INSTALL_SCRIPT)$(NC)\n"; \
 		exit 1; \
 	fi
 
@@ -100,7 +123,7 @@ check: ## Check if development tools are properly installed
 	@printf "$(BLUE)Checking development tools...$(NC)\n"
 	@printf "Go: "
 	@if command -v go >/dev/null 2>&1; then \
-		printf "$(GREEN)✓ Installed $(shell go version)$(NC)\n"; \
+		printf "$(GREEN)✓ Installed $$(go version)$(NC)\n"; \
 	else \
 		printf "$(RED)✗ Not found$(NC)\n"; \
 	fi
@@ -112,7 +135,13 @@ check: ## Check if development tools are properly installed
 	fi
 	@printf "Git: "
 	@if command -v git >/dev/null 2>&1; then \
-		printf "$(GREEN)✓ Installed $(shell git --version)$(NC)\n"; \
+		printf "$(GREEN)✓ Installed $$(git --version)$(NC)\n"; \
+	else \
+		printf "$(RED)✗ Not found$(NC)\n"; \
+	fi
+	@printf "Docker: "
+	@if command -v docker >/dev/null 2>&1; then \
+		printf "$(GREEN)✓ Installed $$(docker --version)$(NC)\n"; \
 	else \
 		printf "$(RED)✗ Not found$(NC)\n"; \
 	fi
@@ -187,12 +216,6 @@ version: ## Show version information
 		printf "Not installed\n"; \
 	fi
 
-# CI/CD helper targets
-ci-setup: ## Setup for CI/CD environments
-	@printf "$(BLUE)Setting up CI/CD environment...$(NC)\n"
-	@mkdir -p ~/.local/bin
-	@echo 'export PATH=$$HOME/.local/bin:$$PATH' >> ~/.bashrc
-	@export PATH=$$HOME/.local/bin:$$PATH
 
 pre-commit: ## Install pre-commit hook for code quality checks
 	@printf "$(BLUE)Setting up pre-commit hook...$(NC)\n"
@@ -222,6 +245,28 @@ remove-hooks: ## Remove installed git hooks
 	@printf "$(BLUE)Removing git hooks...$(NC)\n"
 	@rm -f .git/hooks/pre-commit .git/hooks/commit-msg
 	@printf "$(GREEN)✓ Git hooks removed$(NC)\n"
+
+
+# Project specific targets
+list-scripts: ## List all available scripts
+	@printf "$(BLUE)Available scripts:$(NC)\n"
+	@for script in $(SCRIPTS_DIR)/*.sh; do \
+		if [ -f "$$script" ]; then \
+			printf "$(GREEN)  $$(basename $$script)$(NC)\n"; \
+		fi; \
+	done
+
+
+
+# System info
+info: ## Show detailed system information
+	@printf "$(BLUE)System Information$(NC)\n"
+	@printf "==================\n"
+	@printf "OS: $$(uname -s)\n"
+	@printf "Architecture: $$(uname -m)\n"
+	@printf "Kernel: $$(uname -r)\n"
+	@printf "Shell: $$SHELL\n\n"
+	@$(MAKE) version
 
 # Custom gitlint regex helper
 show-regex: ## Show the gitlint regex pattern
