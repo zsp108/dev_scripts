@@ -32,7 +32,7 @@ jobs:
         fetch-depth: 0  # 🔹 确保 Git 历史完整
     
     - name: install all 
-      run: make install
+      run: make install-go
 
     - name: env check
       run: make check
