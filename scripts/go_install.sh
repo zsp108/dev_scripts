@@ -47,10 +47,14 @@ else
 fi
 
 if [ -z "$1" ]; then
-  echo "Usage: $0 <go-version>  e.g.: $0 1.25.3"
+  log warn "Usage: $0 <go-version>  e.g.: $0 1.25.3"
+  GO_VERSION="1.25.3"
+  log info "未指定版本，使用默认版本: $GO_VERSION"
+else
+  GO_VERSION="$1"
 fi
 
-GO_VERSION="$1"
+
 
 # 获取原始用户信息（当使用sudo执行时）
 if [ -n "$SUDO_USER" ]; then
