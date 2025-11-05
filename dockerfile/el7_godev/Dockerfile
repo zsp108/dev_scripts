@@ -50,7 +50,7 @@ ARG GO_VERSION
 RUN /opt/scripts/go_install.sh ${GO_VERSION} 
 
 # 执行 gitlint 安装脚本
-RUN source ~/.bashrc && /opt/scripts/gitlint_install.sh
+# RUN source ~/.bashrc && /opt/scripts/gitlint_install.sh
 
 
 # 创建工作空间

@@ -4,7 +4,7 @@
 # Variables
 IMAGE_NAME = centos7-godev
 CONTAINER_NAME = el7_mygodev
-DEV_PATH = /path/workspace
+DEV_PATH = ~/workspace/dev
 GO_VERSION ?= 1.25.3
 GIT_VERSION ?= 2.42.0
 DOCKERFILE = Dockerfile
@@ -79,7 +79,7 @@ run:
 	@mkdir -p $(DEV_PATH)
 	docker run -itd --rm \
 		--name $(CONTAINER_NAME) \
-		-v $(DEV_PATH):$(DEV_PATH) \
+		-v $(DEV_PATH):~/workspace/dev/ \
 		$(IMAGE_NAME):latest 
 
 # Run container with custom tag
@@ -93,7 +93,7 @@ run-tag:
 	@mkdir -p $(DEV_PATH)
 	docker run -itd --rm \
 		--name $(CONTAINER_NAME) \
-		-v $(DEV_PATH):$(DEV_PATH) \
+		-v $(DEV_PATH):~/workspace/dev/ \
 		$(IMAGE_NAME):$(TAG)
 
 # Run container interactively (for immediate shell access)
