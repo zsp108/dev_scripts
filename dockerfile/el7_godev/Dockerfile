@@ -30,14 +30,18 @@ RUN yum update -y && \
 WORKDIR /opt/scripts
 
 # 复制安装脚本
-COPY scripts/go_install.sh /opt/scripts/
-COPY scripts/git_install.sh /opt/scripts/
-COPY scripts/gitlint_install.sh /opt/scripts/
+COPY scripts/env_init.sh /root/scripts/
+COPY scripts/go_install.sh /root/scripts/
+COPY scripts/git_install.sh /root/scripts/
+COPY scripts/gitlint_install.sh /root/scripts/
 COPY packages/git*.tar.gz /tmp/
 COPY packages/go*.tar.gz /tmp/
 
 # 设置脚本执行权限
-RUN chmod +x /opt/scripts/go_install.sh /opt/scripts/git_install.sh /opt/scripts/gitlint_install.sh
+RUN chmod +x /opt/scripts/env_init.sh /opt/scripts/go_install.sh /opt/scripts/git_install.sh /opt/scripts/gitlint_install.sh
+
+# 执行环境初始化脚本
+RUN /opt/scripts/env_init.sh
 
 # 执行 Git 安装脚本（使用默认版本）
 # 预先卸载系统自带的 git，避免交互确认

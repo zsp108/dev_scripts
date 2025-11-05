@@ -25,6 +25,7 @@ prepare:
 	@cp $(SCRIPTS_SOURCE_DIR)/go_install.sh $(GO_INSTALL_SCRIPT)
 	@cp $(SCRIPTS_SOURCE_DIR)/git_install.sh $(GIT_INSTALL_SCRIPT)
 	@cp $(SCRIPTS_SOURCE_DIR)/gitlint_install.sh $(GITLINT_INSTALL_SCRIPT)
+	@cp $(SCRIPTS_SOURCE_DIR)/env_init.sh $(SCRIPTS_DIR)/env_init.sh
 	@mkdir -p $(PACKAGES_DIR)
 	@echo "Checking packages..."
 	@if [ ! -f $(GIT_PACKAGE) ]; then \
