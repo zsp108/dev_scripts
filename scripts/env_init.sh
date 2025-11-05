@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # 环境初始化脚本
-# 设置工作目录、代理和中文编码支持
+# 设置工作目录和代理
 # 用法：./env_init.sh [proxy_ip:port]
 # 示例：./env_init.sh                    # 仅设置工作目录
 #       ./env_init.sh 10.10.30.174:10808 # 设置工作目录并配置代理
@@ -48,13 +48,12 @@ show_help() {
   proxy_ip:port    代理服务器地址和端口 (可选)
 
 示例:
-  $0                           # 设置工作目录和中文编码
-  $0 10.10.30.174:10808        # 设置工作目录、中文编码和代理
+  $0                           # 设置工作目录
+  $0 10.10.30.174:10808        # 设置工作目录和代理
 
 功能:
   ✓ 创建并配置工作目录 (~/workspace)
   ✓ 添加 ws 别名快速切换到工作目录
-  ✓ 检测并设置中文UTF-8编码支持
   ✓ 可选配置代理开关函数 (setproxy/unssetproxy/proxy_status)
 
 EOF
@@ -69,7 +68,7 @@ case "$1" in
         ;;
     "")
         # 无参数，仅配置工作目录
-        log info "未提供代理参数，仅配置工作目录和中文编码"
+        log info "未提供代理参数，仅配置工作目录"
         ;;
     *)
         PROXY_IP_PORT="$1"
@@ -139,20 +138,7 @@ configure_workspace() {
     local user_home="$1"
     local user_bashrc="$user_home/.bashrc"
 
-    # 检测和设置中文编码支持
-    local current_encoding=$(echo "$LANG" | cut -d'.' -f2)
-    local chinese_support=false
-
-    if [ "$current_encoding" = "UTF-8" ]; then
-        log info "终端已支持UTF-8编码"
-        chinese_support=true
-    elif locale -a | grep -q "zh_CN.utf8\|zh_CN.UTF-8"; then
-        log info "系统支持中文UTF-8，设置字符编码"
-        chinese_support=true
-    else
-        log warn "系统不支持中文UTF-8，将使用默认编码"
-    fi
-
+    
     if grep -q "export WORKSPACE=" "$user_bashrc"; then
         log warn "$user_bashrc 已包含工作目录配置，请检查配置是否正确"
         return 0
@@ -162,12 +148,6 @@ configure_workspace() {
 
 # 工作目录配置
 export WORKSPACE="$user_home/workspace" # 设置工作目录
-
-# 中文编码支持设置
-if [ "$chinese_support" = true ]; then
-    export LANG=zh_CN.UTF-8
-    export LC_ALL=zh_CN.UTF-8
-fi
 
 #创建工作路径
 if [ ! -d "$user_home/workspace" ]; then
@@ -229,13 +209,6 @@ fi
 log info "环境初始化完成！"
 log info "✓ 工作目录已配置: $ORIGINAL_HOME/workspace"
 
-# 检测中文编码配置状态
-current_encoding=$(echo "$LANG" | cut -d'.' -f2)
-if [ "$current_encoding" = "UTF-8" ] || locale -a | grep -q "zh_CN.utf8\|zh_CN.UTF-8"; then
-    log info "✓ 中文UTF-8编码支持已配置"
-else
-    log info "⚠ 系统不支持中文UTF-8编码"
-fi
 
 if [ -n "$PROXY_IP_PORT" ]; then
     log info "✓ 代理已配置: $PROXY_IP_PORT"
