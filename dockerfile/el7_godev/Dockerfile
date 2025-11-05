@@ -38,23 +38,23 @@ COPY packages/git*.tar.gz /tmp/
 COPY packages/go*.tar.gz /tmp/
 
 # 设置脚本执行权限
-RUN chmod +x /opt/scripts/env_init.sh /opt/scripts/go_install.sh /opt/scripts/git_install.sh /opt/scripts/gitlint_install.sh
+RUN chmod +x /root/scripts/env_init.sh /root/scripts/go_install.sh /root/scripts/git_install.sh /root/scripts/gitlint_install.sh
 
 # 执行环境初始化脚本
-RUN /opt/scripts/env_init.sh
+RUN /root/scripts/env_init.sh
 
 # 执行 Git 安装脚本（使用默认版本）
 # 预先卸载系统自带的 git，避免交互确认
 ARG GIT_VERSION
 RUN yum remove -y git || true && \
-    echo "y" | /opt/scripts/git_install.sh ${GIT_VERSION}
+    echo "y" | /root/scripts/git_install.sh ${GIT_VERSION}
 
 # 执行 Go 安装脚本（指定版本）
 ARG GO_VERSION
-RUN /opt/scripts/go_install.sh ${GO_VERSION} 
+RUN /root/scripts/go_install.sh ${GO_VERSION} 
 
 # 执行 gitlint 安装脚本
-# RUN source ~/.bashrc && /opt/scripts/gitlint_install.sh
+# RUN source ~/.bashrc && /root/scripts/gitlint_install.sh
 
 
 # 创建工作空间
