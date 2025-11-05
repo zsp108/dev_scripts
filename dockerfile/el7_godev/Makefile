@@ -103,7 +103,7 @@ shell:
 	@mkdir -p $(HOME)/workspace
 	docker run -it --rm \
 		--name $(CONTAINER_NAME)-shell \
-		-v $(HOME)/workspace:/root/workspace \
+		-v $(DEV_PATH):/root/workspace/dev/ \
 		$(IMAGE_NAME):latest \
 		/bin/bash
 
