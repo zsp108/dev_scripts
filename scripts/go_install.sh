@@ -121,7 +121,7 @@ generate_go_env_config() {
 export GOVERSION=go$GO_VERSION # Go 版本设置
 export GO_INSTALL_DIR=$ORIGINAL_HOME/go # Go 安装目录
 export GOROOT=\$GO_INSTALL_DIR/\$GOVERSION # GOROOT 设置
-export GOPATH=\$WORKSPACE/golang # GOPATH 设置
+export GOPATH=\${WORKSPACE:-$user_home/workspace}/golang # GOPATH 设置
 export PATH=\$GOROOT/bin:\$GOPATH/bin:\$PATH # 将 Go 语言自带的和通过 go install 安装的二进制文件加入到 PATH 路径中
 export GO111MODULE="on" # 开启 Go moudles 特性
 #export GOPROXY=https://goproxy.cn,direct # 安装 Go 模块时，代理服务器设置
@@ -139,19 +139,8 @@ configure_bashrc() {
         log warn "$user_bashrc 已包含 Go 环境变量配置，请检查配置是否正确"
         return 0
     else
-        # 添加工作目录配置
+        # 添加 Go 环境变量配置
         cat << EOF >> "$user_bashrc"
-export WORKSPACE="$user_home/workspace" # 设置工作目录
-
-#创建工作路径
-if [ ! -d "$user_home/workspace" ]; then
-    mkdir -p "$user_home/workspace"
-fi
-
-# Default entry folder
-cd \$WORKSPACE # 登录系统，默认进入 workspace 目录
-
-alias ws="cd \$WORKSPACE"
 
 $(generate_go_env_config)
 EOF
@@ -174,12 +163,7 @@ if [ "$ORIGINAL_USER" != "$USER" ] && [ "$ORIGINAL_HOME" != "$HOME" ]; then
         log info "已将 $ORIGINAL_HOME/go 目录所有权赋予 $ORIGINAL_USER"
     fi
 
-    # 更改workspace目录的所有权（如果已存在）
-    if [ -d "$ORIGINAL_HOME/workspace" ]; then
-        chown -R "$ORIGINAL_USER:$ORIGINAL_USER" "$ORIGINAL_HOME/workspace"
-        log info "已将 $ORIGINAL_HOME/workspace 目录所有权赋予 $ORIGINAL_USER"
-    fi
-
+  
     # 确保Go安装权限正确
     log info "确保Go安装目录权限正确..."
     if [ -d "$ORIGINAL_HOME/go/go$GO_VERSION" ]; then
