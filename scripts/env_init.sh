@@ -140,7 +140,7 @@ configure_locale() {
     local user_bashrc="$user_home/.bashrc"
 
     if grep -q "export LANG=en_US.UTF-8" "$user_bashrc"; then
-        log warn "$user_bashrc 已包含中文支持配置，请检查配置是否正确"
+        log info "$user_bashrc 已包含中文支持配置，跳过配置..."
         return 0
     else
         # 添加中文支持配置
@@ -162,7 +162,7 @@ configure_workspace() {
 
 
     if grep -q "export WORKSPACE=" "$user_bashrc"; then
-        log warn "$user_bashrc 已包含工作目录配置，请检查配置是否正确"
+        log info "$user_bashrc 已包含工作目录配置，跳过配置..."
         return 0
     else
         # 添加工作目录配置
