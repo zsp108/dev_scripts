@@ -52,6 +52,7 @@ show_help() {
   $0 10.10.30.174:10808        # 设置工作目录和代理
 
 功能:
+  ✓ 配置中文支持 (UTF-8 编码)
   ✓ 创建并配置工作目录 (~/workspace)
   ✓ 添加 ws 别名快速切换到工作目录
   ✓ 可选配置代理开关函数 (setproxy/unssetproxy/proxy_status)
@@ -133,12 +134,33 @@ EOF
     fi
 }
 
+# 中文支持配置函数
+configure_locale() {
+    local user_home="$1"
+    local user_bashrc="$user_home/.bashrc"
+
+    if grep -q "export LANG=en_US.UTF-8" "$user_bashrc"; then
+        log warn "$user_bashrc 已包含中文支持配置，请检查配置是否正确"
+        return 0
+    else
+        # 添加中文支持配置
+        cat << EOF >> "$user_bashrc"
+
+# 中文支持配置
+export LANG=en_US.UTF-8
+export LC_ALL=en_US.UTF-8
+EOF
+        log info "已添加中文支持配置到 $user_bashrc"
+        return 0
+    fi
+}
+
 # 工作目录配置函数
 configure_workspace() {
     local user_home="$1"
     local user_bashrc="$user_home/.bashrc"
 
-    
+
     if grep -q "export WORKSPACE=" "$user_bashrc"; then
         log warn "$user_bashrc 已包含工作目录配置，请检查配置是否正确"
         return 0
@@ -164,7 +186,8 @@ EOF
     fi
 }
 
-# 为当前用户（root）配置工作目录
+# 为当前用户（root）配置中文支持和工作目录
+configure_locale "$HOME"
 configure_workspace "$HOME"
 
 # 如果提供了代理参数，配置代理
@@ -175,6 +198,9 @@ fi
 
 # 如果使用sudo执行，也为原始用户配置工作目录和代理
 if [ "$ORIGINAL_USER" != "$USER" ] && [ "$ORIGINAL_HOME" != "$HOME" ]; then
+    log info "为原始用户 $ORIGINAL_USER 配���中文支持..."
+    configure_locale "$ORIGINAL_HOME"
+
     log info "为原始用户 $ORIGINAL_USER 配置工作目录..."
     configure_workspace "$ORIGINAL_HOME"
 
@@ -207,6 +233,7 @@ fi
 
 # 显示配置总结
 log info "环境初始化完成！"
+log info "✓ 中文支持已配置: UTF-8 编码"
 log info "✓ 工作目录已配置: $ORIGINAL_HOME/workspace"
 
 
