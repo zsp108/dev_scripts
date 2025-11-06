@@ -78,7 +78,7 @@ build-tag: prepare
 run:
 	@echo "Running container $(CONTAINER_NAME) from image $(IMAGE_NAME)..."
 	@mkdir -p $(DEV_PATH)
-	docker run -itd --rm \
+	docker run -itd --restart=always \
 		--name $(CONTAINER_NAME) \
 		-v $(DEV_PATH):/root/workspace/dev/ \
 		$(IMAGE_NAME):latest 
@@ -92,7 +92,7 @@ run-tag:
 	fi
 	@echo "Running container $(CONTAINER_NAME) from image $(IMAGE_NAME):$(TAG)..."
 	@mkdir -p $(DEV_PATH)
-	docker run -itd --rm \
+	docker run -itd --restart=always \
 		--name $(CONTAINER_NAME) \
 		-v $(DEV_PATH):/root/workspace/dev/ \
 		$(IMAGE_NAME):$(TAG)
