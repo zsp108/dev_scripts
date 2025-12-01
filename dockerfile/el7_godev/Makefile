@@ -4,7 +4,7 @@
 # Variables
 IMAGE_NAME = centos7-godev
 CONTAINER_NAME = el7_mygodev
-DEV_PATH = ~/workspace/dev
+DEV_PATH = $(HOME)/workspace/dev
 GO_VERSION ?= 1.25.3
 GIT_VERSION ?= 2.42.0
 DOCKERFILE = Dockerfile
@@ -78,9 +78,8 @@ build-tag: prepare
 run:
 	@echo "Running container $(CONTAINER_NAME) from image $(IMAGE_NAME)..."
 	@mkdir -p $(DEV_PATH)
-	docker run -itd --rm \
+	docker run -itd --restart=always \
 		--name $(CONTAINER_NAME) \
-		-p 8080:8080 \
 		-v $(DEV_PATH):~/workspace/dev/ \
 		$(IMAGE_NAME):latest 
 
@@ -93,9 +92,8 @@ run-tag:
 	fi
 	@echo "Running container $(CONTAINER_NAME) from image $(IMAGE_NAME):$(TAG)..."
 	@mkdir -p $(DEV_PATH)
-	docker run -itd --rm \
+	docker run -itd --restart=always \
 		--name $(CONTAINER_NAME) \
-		-p 8080:8080 \
 		-v $(DEV_PATH):~/workspace/dev/ \
 		$(IMAGE_NAME):$(TAG)
 
