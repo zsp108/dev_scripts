@@ -80,6 +80,7 @@ run:
 	@mkdir -p $(DEV_PATH)
 	docker run -itd --rm \
 		--name $(CONTAINER_NAME) \
+		-p 8080:8080 \
 		-v $(DEV_PATH):~/workspace/dev/ \
 		$(IMAGE_NAME):latest 
 
@@ -94,6 +95,7 @@ run-tag:
 	@mkdir -p $(DEV_PATH)
 	docker run -itd --rm \
 		--name $(CONTAINER_NAME) \
+		-p 8080:8080 \
 		-v $(DEV_PATH):~/workspace/dev/ \
 		$(IMAGE_NAME):$(TAG)
 
@@ -104,6 +106,7 @@ shell:
 	@mkdir -p $(HOME)/workspace
 	docker run -it --rm \
 		--name $(CONTAINER_NAME)-shell \
+		-p 8080:8080 \
 		-v $(DEV_PATH):/root/workspace/dev/ \
 		$(IMAGE_NAME):latest \
 		/bin/bash

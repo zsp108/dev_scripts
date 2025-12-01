@@ -53,9 +53,13 @@ RUN yum remove -y git || true && \
 ARG GO_VERSION
 RUN /root/scripts/go_install.sh ${GO_VERSION} 
 
+# 执行code-server 安装
+# curl -fsSL https://code-server.dev/install.sh | sh
+
 # 执行 gitlint 安装脚本
 # RUN source ~/.bashrc && /root/scripts/gitlint_install.sh
-
+# sed -i 's/^bind-addr: .*/bind-addr: 0.0.0.0:8080/' /home/spz/.config/code-server/config.yaml
+# sed -i 's/^password: .*/password: baAA11__/' /home/spz/.config/code-server/config.yaml
 
 # 创建工作空间
 RUN mkdir -p /root/workspace 
