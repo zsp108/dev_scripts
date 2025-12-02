@@ -280,6 +280,7 @@ if [ -f "/usr/local/git/bin/git" ]; then
             git config --global credential.helper store
             git config --global core.longpaths true
             git config --global core.quotepath off
+            git lfs install --skip-repo
             log info "已配置 Git 全局设置"
         fi
 
