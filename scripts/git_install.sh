@@ -127,16 +127,16 @@ install_dependencies() {
             if command -v dnf >/dev/null 2>&1; then
                 dnf update -y
                 dnf groupinstall -y "Development Tools"
-                dnf install -y curl-devel expat-devel gettext-devel openssl-devel zlib-devel gcc perl-ExtUtils-MakeMaker
+                dnf install -y curl-devel expat-devel gettext-devel openssl-devel zlib-devel gcc perl-ExtUtils-MakeMaker git-lfs
             else
                 yum update -y
                 yum groupinstall -y "Development Tools"
-                yum install -y curl-devel expat-devel gettext-devel openssl-devel zlib-devel gcc perl-ExtUtils-MakeMaker
+                yum install -y epel-release.noarch && yum update -y && yum install -y curl-devel expat-devel gettext-devel openssl-devel zlib-devel gcc perl-ExtUtils-MakeMaker git-lfs.x86_64
             fi
             ;;
         'ubuntu'|'debian')
             apt update -y
-            apt install -y build-essential libcurl4-openssl-dev libexpat1-dev gettext libssl-dev zlib1g-dev autoconf
+            apt install -y build-essential libcurl4-openssl-dev libexpat1-dev gettext libssl-dev zlib1g-dev autoconf git-lfs
             ;;
         *)
             log error "不支持的操作系统: $OS，请手动安装依赖包"
