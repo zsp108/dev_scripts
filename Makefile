@@ -5,6 +5,7 @@
 SHELL := /bin/bash
 SCRIPTS_DIR := scripts
 GO_INSTALL_SCRIPT := $(SCRIPTS_DIR)/go_install.sh
+NODEJS_INSTALL_SCRIPT := $(SCRIPTS_DIR)/nodejs_install.sh
 GITLINT_INSTALL_SCRIPT := $(SCRIPTS_DIR)/gitlint_install.sh
 GIT_INSTALL_SCRIPT := $(SCRIPTS_DIR)/git_install.sh
 DOCKER_INSTALL_SCRIPT := $(SCRIPTS_DIR)/docker_install.sh
@@ -22,7 +23,7 @@ YELLOW := \033[1;33m
 BLUE := \033[0;34m
 NC := \033[0m # No Color
 
-.PHONY: help install install-go install-git install-docker install-gitlint setup gitlint gitlint-all check clean lint test docs pre-commit commit-msg install-hooks remove-hooks list-scripts info version show-regex
+.PHONY: help install install-nodejs install-go install-git install-docker install-gitlint setup gitlint gitlint-all check clean lint test docs pre-commit commit-msg install-hooks remove-hooks list-scripts info version show-regex
 
 # Default target
 help: ## Show this help message
@@ -31,14 +32,25 @@ help: ## Show this help message
 	@printf "$(GREEN)Available targets:$(NC)\n"
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  $(YELLOW)%-15s$(NC) %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 	@printf "\n$(GREEN)Examples:$(NC)\n"
-	@printf "  make install          # Install all tools\n"
-	@printf "  make install-go       # Install Go $(GO_VERSION) or GO_VERSION=1.25.3 \n"
-	@printf "  make gitlint          # Validate commit messages\n"
-	@printf "  make check            # Check installations\n"
-	@printf "  make list-scripts     # List all available scripts\n"
+	@printf "  make install          	# Install all tools\n"
+	@printf "  make install-go       	# Install Go $(GO_VERSION) or GO_VERSION=1.25.3 \n"
+	@printf "  make install-nodejs       	# Install Node.js \n"
+	@printf "  make gitlint          	# Validate commit messages\n"
+	@printf "  make check            	# Check installations\n"
+	@printf "  make list-scripts     	# List all available scripts\n"
 
 # Installation targets
-install: install-go install-git install-docker install-gitlint ## Install all development tools
+install: install-go install-nodejs install-git install-docker install-gitlint ## Install all development tools
+
+install-nodejs: ## Install Node.js
+	@printf "$(BLUE)Installing Node.js ... $(NC) \n"
+	@if [ -f $(NODEJS_INSTALL_SCRIPT) ]; then \
+                chmod +x $(NODEJS_INSTALL_SCRIPT); \
+                ./$(NODEJS_INSTALL_SCRIPT) ; \
+        else \
+                printf "$(RED)Error: Node.js install script not found at $(NODEJS_INSTALL_SCRIPT)$(NC)\n"; \
+                exit 1; \
+        fi
 
 install-go: ## Install Go programming language
 	@printf "$(BLUE)Installing Go $(GO_VERSION)...$(NC)\n"
