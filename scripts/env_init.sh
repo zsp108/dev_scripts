@@ -105,7 +105,8 @@ MODE:
   - 代理配置会在 ~/.bashrc 中添加:
       * setproxy      开启代理
       * unsetproxy    关闭代理
-      * proxy_status  查看代理状态
+      * showproxy     展示当前代理配置
+      * proxy_status  查看代理状态（同 showproxy）
     多次执行 $prog proxy ... 会更新同一段 setproxy 配置，而不会重复追加。
 
 EOF
@@ -204,14 +205,67 @@ configure_proxy() {
     if grep -q "=== 通用代理开关 ===" "$user_bashrc" 2>/dev/null; then
         log info "$user_bashrc 已存在代理配置，执行更新..."
 
-        # 限定在代理配置块范围内做替换
-        local range="/# === 通用代理开关 ===/,/function proxy_status()/"
+        # 用统一模板重写代理配置块，确保 showproxy/proxy_status 都存在
+        local proxy_block
+        proxy_block=$(cat <<EOF
+# === 通用代理开关 ===
+function setproxy() {
+    export http_proxy="${proxy_scheme}://${proxy_ip_port}"
+    export https_proxy="${proxy_scheme}://${proxy_ip_port}"
+    export ftp_proxy="${proxy_scheme}://${proxy_ip_port}"
+    export all_proxy="${proxy_scheme}://${proxy_ip_port}"
+    export no_proxy="172.16.x.x"
+    echo "✅ 已开启终端代理: ${proxy_scheme}://${proxy_ip_port}"
+}
 
-        sed -i "${range} s#export http_proxy=\"[^\"]*\"#export http_proxy=\"${proxy_scheme}://${proxy_ip_port}\"#g"  "$user_bashrc"
-        sed -i "${range} s#export https_proxy=\"[^\"]*\"#export https_proxy=\"${proxy_scheme}://${proxy_ip_port}\"#g" "$user_bashrc"
-        sed -i "${range} s#export ftp_proxy=\"[^\"]*\"#export ftp_proxy=\"${proxy_scheme}://${proxy_ip_port}\"#g"   "$user_bashrc"
-        sed -i "${range} s#export all_proxy=\"[^\"]*\"#export all_proxy=\"${proxy_scheme}://${proxy_ip_port}\"#g"   "$user_bashrc"
-        sed -i "${range} s#echo \"✅ 已开启终端代理: .*\"#echo \"✅ 已开启终端代理: ${proxy_scheme}://${proxy_ip_port}\"#g" "$user_bashrc"
+function unsetproxy() {
+    unset http_proxy https_proxy ftp_proxy all_proxy no_proxy
+    echo "✅ 已关闭终端代理"
+}
+
+function showproxy() {
+    if [ -n "$http_proxy" ]; then
+        echo "🔄 当前代理配置:"
+        echo "  http_proxy=$http_proxy"
+        echo "  https_proxy=$https_proxy"
+        echo "  ftp_proxy=$ftp_proxy"
+        echo "  all_proxy=$all_proxy"
+        echo "  no_proxy=$no_proxy"
+    else
+        echo "⚡ 代理已关闭"
+    fi
+}
+
+function proxy_status() {
+    showproxy
+}
+EOF
+)
+
+        python3 - "$user_bashrc" <<PY
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+block = """${proxy_block}
+"""
+text = path.read_text()
+marker = "# === 通用代理开关 ==="
+if marker not in text:
+    sys.exit(0)
+
+start = text.find(marker)
+proxy_status_idx = text.find("function proxy_status()", start)
+if proxy_status_idx == -1:
+    sys.exit(0)
+
+end = text.find("\n}\n", proxy_status_idx)
+if end == -1:
+    sys.exit(0)
+end += 3  # include trailing newline after closing brace
+
+path.write_text(text[:start] + block + text[end:])
+PY
 
         log info "已更新代理配置为: ${proxy_scheme}://${proxy_ip_port}"
         return 0
@@ -235,12 +289,21 @@ function unsetproxy() {
     echo "✅ 已关闭终端代理"
 }
 
-function proxy_status() {
+function showproxy() {
     if [ -n "\$http_proxy" ]; then
-        echo "🔄 代理已开启: \$http_proxy"
+        echo "🔄 当前代理配置:"
+        echo "  http_proxy=\$http_proxy"
+        echo "  https_proxy=\$https_proxy"
+        echo "  ftp_proxy=\$ftp_proxy"
+        echo "  all_proxy=\$all_proxy"
+        echo "  no_proxy=\$no_proxy"
     else
         echo "⚡ 代理已关闭"
     fi
+}
+
+function proxy_status() {
+    showproxy
 }
 EOF
 
@@ -351,7 +414,8 @@ if [ "$MODE" = "all" ] || [ "$MODE" = "proxy" ]; then
         log info "  使用方法:"
         log info "    setproxy      - 开启代理"
         log info "    unsetproxy    - 关闭代理"
-        log info "    proxy_status  - 检查代理状态"
+        log info "    showproxy     - 展示当前代理设置"
+        log info "    proxy_status  - 检查代理状态（同 showproxy）"
     else
         log info "ℹ 未配置代理 (如需配置，请在 all/proxy 模式下提供 IP 信息)"
     fi
@@ -362,4 +426,3 @@ log info "请执行 'source ~/.bashrc' 或重新登录以加载环境变量"
 if [ "$ORIGINAL_USER" != "$USER" ] && [ "$ORIGINAL_HOME" != "$HOME" ]; then
     log info "原始用户 $ORIGINAL_USER 的环境变量已配置，请重新登录以生效"
 fi
-
