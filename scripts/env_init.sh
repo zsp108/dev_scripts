@@ -224,13 +224,13 @@ function unsetproxy() {
 }
 
 function showproxy() {
-    if [ -n "$http_proxy" ]; then
+    if [ -n "\$http_proxy" ]; then
         echo "🔄 当前代理配置:"
-        echo "  http_proxy=$http_proxy"
-        echo "  https_proxy=$https_proxy"
-        echo "  ftp_proxy=$ftp_proxy"
-        echo "  all_proxy=$all_proxy"
-        echo "  no_proxy=$no_proxy"
+        echo "  http_proxy=\$http_proxy"
+        echo "  https_proxy=\$https_proxy"
+        echo "  ftp_proxy=\$ftp_proxy"
+        echo "  all_proxy=\$all_proxy"
+        echo "  no_proxy=\$no_proxy"
     else
         echo "⚡ 代理已关闭"
     fi
