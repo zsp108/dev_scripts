@@ -1,14 +1,43 @@
 #!/bin/bash
 #
 # 自动下载并安装 Docker
-# 用法：sudo ./docker_install.sh [docker-version] [channel]
-# 示例：sudo ./docker_install.sh 24.0.6 stable 或 sudo ./docker_install.sh latest
+# 用法：sudo ./docker_install.sh [docker-version] [channel] [docker-install-path]
+# 示例：
+#   sudo ./docker_install.sh 24.0.6 stable /data/docker
+#   sudo ./docker_install.sh latest stable /var/lib/docker
 
 set -e
 
 SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/" && pwd -P)"
 
 logfile=$SCRIPT_ROOT/init.log
+
+show_help() {
+    cat <<'EOF'
+用法:
+  sudo ./docker_install.sh [docker-version] [channel] [docker-install-path]
+
+参数:
+  docker-version       Docker 版本，默认 latest
+  channel              Docker 通道，默认 stable（如 stable/test/nightly）
+  docker-install-path  Docker 数据目录(data-root)，默认 /var/lib/docker
+
+示例:
+  sudo ./docker_install.sh
+  sudo ./docker_install.sh latest
+  sudo ./docker_install.sh 24.0.6 stable
+  sudo ./docker_install.sh 24.0.6 stable /data/docker
+
+帮助:
+  sudo ./docker_install.sh -h
+  sudo ./docker_install.sh --help
+EOF
+}
+
+if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ "$1" = "help" ]; then
+    show_help
+    exit 0
+fi
 # 日志函数，记录操作系统，并且将输出打印到屏幕
 function log {
     local msg
@@ -50,6 +79,7 @@ fi
 # 解析命令行参数
 DOCKER_VERSION=""
 DOCKER_CHANNEL="stable"
+DOCKER_INSTALL_PATH="/var/lib/docker"
 
 if [ -n "$1" ]; then
     if [ "$1" = "latest" ]; then
@@ -64,12 +94,17 @@ if [ -n "$2" ]; then
     DOCKER_CHANNEL="$2"
 fi
 
+if [ -n "$3" ]; then
+    DOCKER_INSTALL_PATH="$3"
+fi
+
 if [ -z "$DOCKER_VERSION" ]; then
     DOCKER_VERSION="latest"
 fi
 
 log info "Docker版本: $DOCKER_VERSION"
 log info "Docker通道: $DOCKER_CHANNEL"
+log info "Docker安装路径(data-root): $DOCKER_INSTALL_PATH"
 
 # 获取原始用户信息（当使用sudo执行时）
 if [ -n "$SUDO_USER" ]; then
@@ -134,8 +169,12 @@ install_docker_debian() {
     # 安装必要的依赖
     apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-release || log error "无法安装依赖包"
 
-    # 添加Docker官方GPG密钥
-    curl -fsSL https://download.docker.com/linux/$OS/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg || log error "无法添加Docker GPG密钥"
+    # 添加Docker官方GPG密钥（带重试，避免网络抖动导致失败）
+    local docker_gpg_tmp="/tmp/docker.gpg"
+    rm -f "$docker_gpg_tmp"
+    curl -fsSL --retry 5 --retry-delay 2 --connect-timeout 10 https://download.docker.com/linux/$OS/gpg -o "$docker_gpg_tmp" || log error "无法下载Docker GPG密钥"
+    gpg --dearmor --yes -o /usr/share/keyrings/docker-archive-keyring.gpg "$docker_gpg_tmp" || log error "无法添加Docker GPG密钥"
+    rm -f "$docker_gpg_tmp"
 
     # 设置Docker仓库
     echo "deb [arch=$DOCKER_ARCH signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/$OS $VERSION_CODENAME $DOCKER_CHANNEL" > /etc/apt/sources.list.d/docker.list || log error "无法添加Docker仓库"
@@ -218,6 +257,20 @@ install_docker_compose() {
     fi
 }
 
+# 配置Docker数据目录
+configure_docker_path() {
+    log info "配置Docker安装路径(data-root): $DOCKER_INSTALL_PATH"
+
+    mkdir -p /etc/docker || log error "无法创建 /etc/docker 目录"
+    mkdir -p "$DOCKER_INSTALL_PATH" || log error "无法创建 Docker 安装路径: $DOCKER_INSTALL_PATH"
+
+    cat > /etc/docker/daemon.json <<EOF
+{
+  "data-root": "$DOCKER_INSTALL_PATH"
+}
+EOF
+}
+
 # 根据操作系统选择安装方法
 case "$OS" in
     ubuntu|debian|linuxmint|pop)
@@ -233,6 +286,9 @@ case "$OS" in
         log error "不支持的操作系统: $OS"
         ;;
 esac
+
+# 写入Docker data-root配置
+configure_docker_path
 
 # 启动并启用Docker服务
 log info "启动Docker服务"
@@ -258,6 +314,3 @@ docker run --rm hello-world || log warn "Docker测试容器运行失败，可能
 log info "Docker安装完成！"
 log info "使用 'docker --version' 查看版本"
 log info "使用 'docker run hello-world' 测试安装"
-
-
-
