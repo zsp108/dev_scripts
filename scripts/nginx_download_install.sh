@@ -847,10 +847,10 @@ def safe_filename(url, requested):
     name = requested.strip()
     if not name:
         parsed = urllib.parse.urlparse(url)
-        name = os.path.basename(parsed.path.rstrip("/"))
+        name = urllib.parse.unquote(os.path.basename(parsed.path.rstrip("/")))
     if not name:
         name = "download-" + datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-    name = os.path.basename(name)
+    name = os.path.basename(urllib.parse.unquote(name))
     name = name.replace("\x00", "").strip()
     if not name or name in {".", ".."}:
         raise ValueError("文件名不合法")
