@@ -478,6 +478,7 @@ if command -v python3 >/dev/null 2>&1; then
     python3 - "$DOWNLOAD_ROOT" "$tmp" <<'PY'
 import datetime
 import html
+import json
 import os
 import sys
 from urllib.parse import quote
@@ -528,8 +529,9 @@ with open(output, "w", encoding="utf-8") as f:
     f.write(".downloader-header{display:flex;align-items:center;justify-content:space-between;gap:12px;}\n")
     f.write(".downloader-body{margin-top:12px;}.downloader-body.hidden{display:none;}\n")
     f.write(".downloader label{display:block;font-weight:700;margin:10px 0 6px;}\n")
-    f.write(".downloader input,.downloader select{box-sizing:border-box;width:100%;padding:9px;border:1px solid #cbd5e1;font-size:14px;}\n")
+    f.write(".downloader input{box-sizing:border-box;width:100%;padding:9px;border:1px solid #cbd5e1;font-size:14px;}\n")
     f.write(".downloader button{margin-top:12px;padding:9px 14px;border:0;background:#2563eb;color:#fff;font-weight:700;cursor:pointer;}.downloader-header button{margin-top:0;}\n")
+    f.write(".dir-picker{position:relative;}.dir-button{box-sizing:border-box;width:100%;margin:0!important;padding:9px!important;border:1px solid #cbd5e1!important;background:#fff!important;color:#1f2937!important;text-align:left!important;font-weight:400!important;}.dir-menu{display:none;position:absolute;z-index:20;top:40px;left:0;max-width:100%;background:#fff;border:1px solid #cbd5e1;box-shadow:0 8px 18px rgba(15,23,42,.12);}.dir-menu.open{display:flex;}.dir-level{list-style:none;margin:0;padding:6px 0;min-width:220px;max-height:280px;overflow:auto;border-right:1px solid #e5e7eb;}.dir-level:last-child{border-right:0;}.dir-item{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:8px 12px;cursor:pointer;white-space:nowrap;}.dir-item:hover,.dir-item.active{background:#eff6ff;color:#1d4ed8;}.dir-item span:last-child{color:#64748b;}\n")
     f.write(".actions{display:flex;gap:10px;align-items:center;margin:0 0 16px;}.actions button{padding:8px 12px;border:0;background:#475569;color:#fff;font-weight:700;cursor:pointer;}.actions button:disabled{opacity:.6;cursor:not-allowed;}\n")
     f.write(".download-status{border:1px solid #e5e7eb;background:#f8fafc;margin-top:12px;padding:10px;min-height:46px;}\n")
     f.write(".progress{height:12px;background:#e5e7eb;margin-top:8px;overflow:hidden;}\n")
@@ -552,12 +554,11 @@ with open(output, "w", encoding="utf-8") as f:
         f.write('<label for="download-filename">保存文件名（可选）</label>\n')
         f.write('<input id="download-filename" name="filename" type="text" placeholder="留空则自动使用 URL 文件名">\n')
         f.write('<label for="download-dir">保存目录（相对下载根目录，可选）</label>\n')
-        f.write('<select id="download-dir" name="directory">\n')
-        f.write('<option value="">/</option>\n')
-        for directory in directories:
-            safe_dir = html.escape(directory)
-            f.write(f'<option value="{safe_dir}">{safe_dir}/</option>\n')
-        f.write("</select>\n")
+        f.write('<input id="download-dir" name="directory" type="hidden" value="">\n')
+        f.write('<div id="download-dir-picker" class="dir-picker">\n')
+        f.write('<button id="download-dir-button" class="dir-button" type="button">保存目录: /</button>\n')
+        f.write('<div id="download-dir-menu" class="dir-menu"></div>\n')
+        f.write("</div>\n")
         f.write("<button type=\"submit\">开始下载</button>\n")
         f.write("</form>\n")
         f.write('<div id="download-status" class="download-status">等待提交下载任务。</div>\n')
@@ -579,7 +580,12 @@ with open(output, "w", encoding="utf-8") as f:
     if url_downloader_enabled:
         f.write("<script>\n")
         f.write("const form=document.getElementById('url-download-form');const statusBox=document.getElementById('download-status');const bar=document.getElementById('download-progress');const refreshBtn=document.getElementById('refresh-list');const refreshStatus=document.getElementById('refresh-status');const toggleBtn=document.getElementById('toggle-url-download');const downloadBody=document.getElementById('url-download-body');\n")
+        f.write(f"const directoryList={json.dumps(directories, ensure_ascii=False)};const dirInput=document.getElementById('download-dir');const dirPicker=document.getElementById('download-dir-picker');const dirButton=document.getElementById('download-dir-button');const dirMenu=document.getElementById('download-dir-menu');\n")
         f.write("function fmt(n){if(!n&&n!==0)return '-';const u=['B','KB','MB','GB','TB'];let i=0;while(n>=1024&&i<u.length-1){n/=1024;i++;}return (i?n.toFixed(1):n.toFixed(0))+' '+u[i];}\n")
+        f.write("function buildDirTree(paths){const root=[];for(const path of paths){let level=root;let current='';for(const name of path.split('/').filter(Boolean)){current=current?current+'/'+name:name;let node=level.find(item=>item.name===name);if(!node){node={name,path:current,children:[]};level.push(node);}level=node.children;}}return root;}\n")
+        f.write("const dirTree=buildDirTree(directoryList);function setDirectory(path){dirInput.value=path;dirButton.textContent='保存目录: '+(path?path+'/':'/');dirMenu.classList.remove('open');}\n")
+        f.write("function renderDirLevel(nodes,depth){while(dirMenu.children.length>depth){dirMenu.removeChild(dirMenu.lastChild);}if(!nodes.length)return;const list=document.createElement('ul');list.className='dir-level';if(depth===0){const rootItem=document.createElement('li');rootItem.className='dir-item';rootItem.innerHTML='<strong>/</strong>';rootItem.addEventListener('click',()=>setDirectory(''));list.appendChild(rootItem);}for(const node of nodes){const item=document.createElement('li');item.className='dir-item';item.innerHTML='<strong>'+node.name+'/</strong><span>'+(node.children.length?'›':'')+'</span>';item.addEventListener('mouseenter',()=>{for(const el of list.children){el.classList.remove('active');}item.classList.add('active');renderDirLevel(node.children,depth+1);});item.addEventListener('click',event=>{event.stopPropagation();setDirectory(node.path);});list.appendChild(item);}dirMenu.appendChild(list);}\n")
+        f.write("dirButton.addEventListener('click',()=>{if(dirMenu.classList.toggle('open')){dirMenu.innerHTML='';renderDirLevel(dirTree,0);}});document.addEventListener('click',event=>{if(!dirPicker.contains(event.target)){dirMenu.classList.remove('open');}});\n")
         f.write("async function jsonFetch(url,opts){const r=await fetch(url,opts);const ct=r.headers.get('content-type')||'';if(!ct.includes('application/json')){throw new Error('服务未返回 JSON，请确认 url-downloader.service 已启动且 nginx 反向代理已生效');}const j=await r.json();return {r,j};}\n")
         f.write("function show(s,cls){statusBox.className='download-status '+(cls||'');statusBox.textContent=s;}\n")
         f.write("toggleBtn.addEventListener('click',()=>{const hidden=downloadBody.classList.toggle('hidden');toggleBtn.textContent=hidden?'展开':'收起';toggleBtn.setAttribute('aria-expanded',String(!hidden));});\n")
@@ -943,17 +949,9 @@ def list_directories():
     return directories
 
 
-def directory_options():
-    options = ['<option value="">/</option>']
-    for directory in list_directories():
-        safe_dir = html.escape(directory)
-        options.append(f'<option value="{safe_dir}">{safe_dir}/</option>')
-    return "\n".join(options)
-
-
 def app_page():
     root = html.escape(DOWNLOAD_ROOT)
-    options = directory_options()
+    directory_json = json.dumps(list_directories(), ensure_ascii=False)
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -970,9 +968,18 @@ def app_page():
     .downloader-body{{margin-top:12px;}}
     .downloader-body.hidden{{display:none;}}
     label{{display:block;font-weight:700;margin:12px 0 6px;}}
-    input,select{{box-sizing:border-box;width:100%;padding:9px;border:1px solid #cbd5e1;font-size:14px;}}
+    input{{box-sizing:border-box;width:100%;padding:9px;border:1px solid #cbd5e1;font-size:14px;}}
     button{{margin-top:12px;padding:9px 14px;border:0;background:#2563eb;color:#fff;font-weight:700;cursor:pointer;}}
     .downloader-header button{{margin-top:0;}}
+    .dir-picker{{position:relative;}}
+    .dir-button{{box-sizing:border-box;width:100%;margin:0!important;padding:9px!important;border:1px solid #cbd5e1!important;background:#fff!important;color:#1f2937!important;text-align:left!important;font-weight:400!important;}}
+    .dir-menu{{display:none;position:absolute;z-index:20;top:40px;left:0;max-width:100%;background:#fff;border:1px solid #cbd5e1;box-shadow:0 8px 18px rgba(15,23,42,.12);}}
+    .dir-menu.open{{display:flex;}}
+    .dir-level{{list-style:none;margin:0;padding:6px 0;min-width:220px;max-height:280px;overflow:auto;border-right:1px solid #e5e7eb;}}
+    .dir-level:last-child{{border-right:0;}}
+    .dir-item{{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:8px 12px;cursor:pointer;white-space:nowrap;}}
+    .dir-item:hover,.dir-item.active{{background:#eff6ff;color:#1d4ed8;}}
+    .dir-item span:last-child{{color:#64748b;}}
     .row{{display:flex;gap:10px;align-items:center;margin-top:10px;}}
     .secondary{{background:#475569;}}
     .status{{border:1px solid #e5e7eb;background:#f8fafc;margin-top:14px;padding:10px;min-height:46px;}}
@@ -996,9 +1003,11 @@ def app_page():
         <label for="download-filename">保存文件名（可选）</label>
         <input id="download-filename" name="filename" type="text" placeholder="留空则自动使用 URL 文件名">
         <label for="download-dir">保存目录（相对下载根目录，可选）</label>
-        <select id="download-dir" name="directory">
-          {options}
-        </select>
+        <input id="download-dir" name="directory" type="hidden" value="">
+        <div id="download-dir-picker" class="dir-picker">
+          <button id="download-dir-button" class="dir-button" type="button">保存目录: /</button>
+          <div id="download-dir-menu" class="dir-menu"></div>
+        </div>
         <div class="row">
           <button type="submit">开始下载</button>
           <button id="refresh-list" class="secondary" type="button">刷新文件列表</button>
@@ -1017,7 +1026,18 @@ def app_page():
     const refreshStatus=document.getElementById('refresh-status');
     const toggleBtn=document.getElementById('toggle-url-download');
     const downloadBody=document.getElementById('url-download-body');
+    const directoryList={directory_json};
+    const dirInput=document.getElementById('download-dir');
+    const dirPicker=document.getElementById('download-dir-picker');
+    const dirButton=document.getElementById('download-dir-button');
+    const dirMenu=document.getElementById('download-dir-menu');
     function fmt(n){{if(!n&&n!==0)return '-';const u=['B','KB','MB','GB','TB'];let i=0;while(n>=1024&&i<u.length-1){{n/=1024;i++;}}return (i?n.toFixed(1):n.toFixed(0))+' '+u[i];}}
+    function buildDirTree(paths){{const root=[];for(const path of paths){{let level=root;let current='';for(const name of path.split('/').filter(Boolean)){{current=current?current+'/'+name:name;let node=level.find(item=>item.name===name);if(!node){{node={{name,path:current,children:[]}};level.push(node);}}level=node.children;}}}}return root;}}
+    const dirTree=buildDirTree(directoryList);
+    function setDirectory(path){{dirInput.value=path;dirButton.textContent='保存目录: '+(path?path+'/':'/');dirMenu.classList.remove('open');}}
+    function renderDirLevel(nodes,depth){{while(dirMenu.children.length>depth){{dirMenu.removeChild(dirMenu.lastChild);}}if(!nodes.length)return;const list=document.createElement('ul');list.className='dir-level';if(depth===0){{const rootItem=document.createElement('li');rootItem.className='dir-item';rootItem.innerHTML='<strong>/</strong>';rootItem.addEventListener('click',()=>setDirectory(''));list.appendChild(rootItem);}}for(const node of nodes){{const item=document.createElement('li');item.className='dir-item';item.innerHTML='<strong>'+node.name+'/</strong><span>'+(node.children.length?'›':'')+'</span>';item.addEventListener('mouseenter',()=>{{for(const el of list.children){{el.classList.remove('active');}}item.classList.add('active');renderDirLevel(node.children,depth+1);}});item.addEventListener('click',event=>{{event.stopPropagation();setDirectory(node.path);}});list.appendChild(item);}}dirMenu.appendChild(list);}}
+    dirButton.addEventListener('click',()=>{{if(dirMenu.classList.toggle('open')){{dirMenu.innerHTML='';renderDirLevel(dirTree,0);}}}});
+    document.addEventListener('click',event=>{{if(!dirPicker.contains(event.target)){{dirMenu.classList.remove('open');}}}});
     function show(s,cls){{statusBox.className='status '+(cls||'');statusBox.textContent=s;}}
     toggleBtn.addEventListener('click',()=>{{const hidden=downloadBody.classList.toggle('hidden');toggleBtn.textContent=hidden?'展开':'收起';toggleBtn.setAttribute('aria-expanded',String(!hidden));}});
     async function poll(id){{const r=await fetch('/url-download/status?id='+encodeURIComponent(id));const j=await r.json();const pct=j.total?Math.floor(j.downloaded*100/j.total):0;bar.style.width=(j.total?pct:0)+'%';show(j.message+' | '+fmt(j.downloaded)+(j.total?' / '+fmt(j.total)+' ('+pct+'%)':''),j.status==='done'?'ok':(j.status==='error'?'err':''));if(j.status==='done'){{bar.style.width='100%';return;}}if(j.status==='error')return;setTimeout(()=>poll(id),1000);}}
