@@ -526,7 +526,7 @@ with open(output, "w", encoding="utf-8") as f:
     f.write("h1{font-size:28px;margin:0 0 8px;} .meta{color:#64748b;margin-bottom:24px;}\n")
     f.write(".downloader{background:#fff;border:1px solid #e5e7eb;margin:0 0 24px;padding:16px;}\n")
     f.write(".downloader h2{font-size:18px;margin:0;}\n")
-    f.write(".downloader-header{display:flex;align-items:center;justify-content:space-between;gap:12px;}\n")
+    f.write(".downloader-header{display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer;}\n")
     f.write(".downloader-body{margin-top:12px;}.downloader-body.hidden{display:none;}\n")
     f.write(".downloader label{display:block;font-weight:700;margin:10px 0 6px;}\n")
     f.write(".downloader input{box-sizing:border-box;width:100%;padding:9px;border:1px solid #cbd5e1;font-size:14px;}\n")
@@ -579,7 +579,7 @@ with open(output, "w", encoding="utf-8") as f:
     f.write("</tbody>\n</table>\n")
     if url_downloader_enabled:
         f.write("<script>\n")
-        f.write("const form=document.getElementById('url-download-form');const statusBox=document.getElementById('download-status');const bar=document.getElementById('download-progress');const refreshBtn=document.getElementById('refresh-list');const refreshStatus=document.getElementById('refresh-status');const toggleBtn=document.getElementById('toggle-url-download');const downloadBody=document.getElementById('url-download-body');\n")
+        f.write("const form=document.getElementById('url-download-form');const statusBox=document.getElementById('download-status');const bar=document.getElementById('download-progress');const refreshBtn=document.getElementById('refresh-list');const refreshStatus=document.getElementById('refresh-status');const toggleBtn=document.getElementById('toggle-url-download');const downloadBody=document.getElementById('url-download-body');const downloadHeader=document.querySelector('.downloader-header');const downloaderSection=document.querySelector('.downloader');\n")
         f.write(f"const directoryList={json.dumps(directories, ensure_ascii=False)};const dirInput=document.getElementById('download-dir');const dirPicker=document.getElementById('download-dir-picker');const dirButton=document.getElementById('download-dir-button');const dirMenu=document.getElementById('download-dir-menu');\n")
         f.write("function fmt(n){if(!n&&n!==0)return '-';const u=['B','KB','MB','GB','TB'];let i=0;while(n>=1024&&i<u.length-1){n/=1024;i++;}return (i?n.toFixed(1):n.toFixed(0))+' '+u[i];}\n")
         f.write("function buildDirTree(paths){const root=[];for(const path of paths){let level=root;let current='';for(const name of path.split('/').filter(Boolean)){current=current?current+'/'+name:name;let node=level.find(item=>item.name===name);if(!node){node={name,path:current,children:[]};level.push(node);}level=node.children;}}return root;}\n")
@@ -588,8 +588,10 @@ with open(output, "w", encoding="utf-8") as f:
         f.write("dirButton.addEventListener('click',()=>{if(dirMenu.classList.toggle('open')){dirMenu.innerHTML='';renderDirLevel(dirTree,0);}});document.addEventListener('click',event=>{if(!dirPicker.contains(event.target)){dirMenu.classList.remove('open');}});\n")
         f.write("async function jsonFetch(url,opts){const r=await fetch(url,opts);const ct=r.headers.get('content-type')||'';if(!ct.includes('application/json')){throw new Error('服务未返回 JSON，请确认 url-downloader.service 已启动且 nginx 反向代理已生效');}const j=await r.json();return {r,j};}\n")
         f.write("function show(s,cls){statusBox.className='download-status '+(cls||'');statusBox.textContent=s;}\n")
-        f.write("toggleBtn.addEventListener('click',()=>{const hidden=downloadBody.classList.toggle('hidden');toggleBtn.textContent=hidden?'展开':'收起';toggleBtn.setAttribute('aria-expanded',String(!hidden));});\n")
-        f.write("async function poll(id){const {r,j}=await jsonFetch('/url-download/status?id='+encodeURIComponent(id));const pct=j.total?Math.floor(j.downloaded*100/j.total):0;bar.style.width=(j.total?pct:0)+'%';show(j.message+' | '+fmt(j.downloaded)+(j.total?' / '+fmt(j.total)+' ('+pct+'%)':''),j.status==='done'?'ok':(j.status==='error'?'err':''));if(j.status==='done'){bar.style.width='100%';setTimeout(()=>location.reload(),1200);return;}if(j.status==='error')return;setTimeout(()=>poll(id),1000);}\n")
+        f.write("function setDownloadExpanded(expanded){downloadBody.classList.toggle('hidden',!expanded);toggleBtn.textContent=expanded?'收起':'展开';toggleBtn.setAttribute('aria-expanded',String(expanded));try{localStorage.setItem('urlDownloadExpanded',expanded?'true':'false');}catch(err){}}\n")
+        f.write("function toggleDownload(){setDownloadExpanded(downloadBody.classList.contains('hidden'));}\n")
+        f.write("downloadHeader.addEventListener('click',toggleDownload);toggleBtn.addEventListener('click',event=>{event.stopPropagation();toggleDownload();});downloaderSection.addEventListener('click',event=>{if(event.target===downloaderSection&&downloadBody.classList.contains('hidden'))setDownloadExpanded(true);});try{if(localStorage.getItem('urlDownloadExpanded')==='true')setDownloadExpanded(true);}catch(err){}\n")
+        f.write("async function poll(id){const {r,j}=await jsonFetch('/url-download/status?id='+encodeURIComponent(id));const pct=j.total?Math.floor(j.downloaded*100/j.total):0;bar.style.width=(j.total?pct:0)+'%';show(j.message+' | '+fmt(j.downloaded)+(j.total?' / '+fmt(j.total)+' ('+pct+'%)':''),j.status==='done'?'ok':(j.status==='error'?'err':''));if(j.status==='done'){bar.style.width='100%';setDownloadExpanded(true);setTimeout(()=>location.reload(),1200);return;}if(j.status==='error')return;setTimeout(()=>poll(id),1000);}\n")
         f.write("form.addEventListener('submit',async e=>{e.preventDefault();bar.style.width='0';show('正在创建下载任务...');try{const body=new URLSearchParams(new FormData(form));const {r,j}=await jsonFetch('/url-download',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body});if(!r.ok){show(j.error||'创建下载任务失败','err');return;}show('下载任务已开始');poll(j.id);}catch(err){show('创建下载任务失败: '+err.message,'err');}});\n")
         f.write("refreshBtn.addEventListener('click',async()=>{refreshBtn.disabled=true;refreshStatus.textContent='正在刷新...';try{const {r,j}=await jsonFetch('/url-download/refresh',{method:'POST'});if(!r.ok){refreshStatus.textContent=j.error||'刷新失败';refreshBtn.disabled=false;return;}refreshStatus.textContent='刷新完成，正在重新加载页面...';setTimeout(()=>location.reload(),500);}catch(err){refreshStatus.textContent='刷新失败: '+err.message;refreshBtn.disabled=false;}});\n")
         f.write("</script>\n")
@@ -963,7 +965,7 @@ def app_page():
     main{{max-width:860px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;padding:20px;}}
     h1{{font-size:28px;margin:0 0 8px;}}
     .meta{{color:#64748b;margin-bottom:18px;}}
-    .downloader-header{{display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:1px solid #e5e7eb;padding-top:16px;}}
+    .downloader-header{{display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:1px solid #e5e7eb;padding-top:16px;cursor:pointer;}}
     .downloader-header h2{{font-size:18px;margin:0;}}
     .downloader-body{{margin-top:12px;}}
     .downloader-body.hidden{{display:none;}}
@@ -1026,6 +1028,7 @@ def app_page():
     const refreshStatus=document.getElementById('refresh-status');
     const toggleBtn=document.getElementById('toggle-url-download');
     const downloadBody=document.getElementById('url-download-body');
+    const downloadHeader=document.querySelector('.downloader-header');
     const directoryList={directory_json};
     const dirInput=document.getElementById('download-dir');
     const dirPicker=document.getElementById('download-dir-picker');
@@ -1039,7 +1042,11 @@ def app_page():
     dirButton.addEventListener('click',()=>{{if(dirMenu.classList.toggle('open')){{dirMenu.innerHTML='';renderDirLevel(dirTree,0);}}}});
     document.addEventListener('click',event=>{{if(!dirPicker.contains(event.target)){{dirMenu.classList.remove('open');}}}});
     function show(s,cls){{statusBox.className='status '+(cls||'');statusBox.textContent=s;}}
-    toggleBtn.addEventListener('click',()=>{{const hidden=downloadBody.classList.toggle('hidden');toggleBtn.textContent=hidden?'展开':'收起';toggleBtn.setAttribute('aria-expanded',String(!hidden));}});
+    function setDownloadExpanded(expanded){{downloadBody.classList.toggle('hidden',!expanded);toggleBtn.textContent=expanded?'收起':'展开';toggleBtn.setAttribute('aria-expanded',String(expanded));try{{localStorage.setItem('urlDownloadExpanded',expanded?'true':'false');}}catch(err){{}}}}
+    function toggleDownload(){{setDownloadExpanded(downloadBody.classList.contains('hidden'));}}
+    downloadHeader.addEventListener('click',toggleDownload);
+    toggleBtn.addEventListener('click',event=>{{event.stopPropagation();toggleDownload();}});
+    try{{if(localStorage.getItem('urlDownloadExpanded')==='true')setDownloadExpanded(true);}}catch(err){{}}
     async function poll(id){{const r=await fetch('/url-download/status?id='+encodeURIComponent(id));const j=await r.json();const pct=j.total?Math.floor(j.downloaded*100/j.total):0;bar.style.width=(j.total?pct:0)+'%';show(j.message+' | '+fmt(j.downloaded)+(j.total?' / '+fmt(j.total)+' ('+pct+'%)':''),j.status==='done'?'ok':(j.status==='error'?'err':''));if(j.status==='done'){{bar.style.width='100%';return;}}if(j.status==='error')return;setTimeout(()=>poll(id),1000);}}
     form.addEventListener('submit',async e=>{{e.preventDefault();bar.style.width='0';show('正在创建下载任务...');try{{const body=new URLSearchParams(new FormData(form));const r=await fetch('/url-download',{{method:'POST',headers:{{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'}},body}});const j=await r.json();if(!r.ok){{show(j.error||'创建下载任务失败','err');return;}}show('下载任务已开始');poll(j.id);}}catch(err){{show('创建下载任务失败: '+err,'err');}}}});
     refreshBtn.addEventListener('click',async()=>{{refreshBtn.disabled=true;refreshStatus.textContent='正在刷新...';try{{const r=await fetch('/url-download/refresh',{{method:'POST'}});const j=await r.json();if(!r.ok){{refreshStatus.textContent=j.error||'刷新失败';refreshBtn.disabled=false;return;}}refreshStatus.textContent='刷新完成';}}catch(err){{refreshStatus.textContent='刷新失败: '+err;}}finally{{refreshBtn.disabled=false;}}}});
