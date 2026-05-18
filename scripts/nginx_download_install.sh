@@ -19,7 +19,7 @@ SERVER_NAME="_"
 ASSUME_YES="false"
 DEPLOY_NGINX="true"
 DEPLOY_FILEBROWSER="false"
-DEPLOY_URL_DOWNLOADER="false"
+DEPLOY_URL_DOWNLOADER="auto"
 FILEBROWSER_PORT="8080"
 FILEBROWSER_IMAGE="filebrowser/filebrowser:v2.32.0"
 FILEBROWSER_NAME="filebrowser"
@@ -50,7 +50,7 @@ show_help() {
   --only-filebrowser      只部署 File Browser，不安装或改动 nginx
   --skip-nginx            跳过 nginx 安装配置
   --skip-filebrowser      跳过 File Browser 部署
-  --with-url-downloader   部署 URL 下载 Web 服务
+  --with-url-downloader   部署 URL 下载 Web 服务（默认随 nginx 下载页一起部署）
   --only-url-downloader   只部署 URL 下载 Web 服务
   --skip-url-downloader   跳过 URL 下载 Web 服务
   --filebrowser-port      指定 File Browser 监听端口，默认 8080
@@ -67,7 +67,7 @@ show_help() {
   监听下载根目录下新增、删除、重命名文件或目录后自动刷新 index.html。
   File Browser 使用 Docker 部署，文件根目录与 nginx 下载根目录保持一致。
   如果未安装 Docker，会提示并跳过 File Browser 部署。
-  URL 下载服务提供一个简单页面，可输入 http/https 链接并下载到同一根目录。
+  URL 下载服务提供刷新文件列表和 URL 下载能力，默认随 nginx 下载页一起部署。
 EOF
 }
 
@@ -221,6 +221,14 @@ parse_args() {
 }
 
 parse_args "$@"
+
+if [ "$DEPLOY_URL_DOWNLOADER" = "auto" ]; then
+    if [ "$DEPLOY_NGINX" = "true" ]; then
+        DEPLOY_URL_DOWNLOADER="true"
+    else
+        DEPLOY_URL_DOWNLOADER="false"
+    fi
+fi
 
 if [ "$EUID" -ne 0 ]; then
     if ! sudo -n true 2>/dev/null; then
@@ -443,6 +451,7 @@ write_index_generator() {
     mkdir -p /etc/default
     cat > "$env_file" <<EOF
 DOWNLOAD_ROOT="$DOWNLOAD_ROOT"
+URL_DOWNLOADER_ENABLED="$DEPLOY_URL_DOWNLOADER"
 EOF
 
     cat > "$generator" <<'EOF'
@@ -451,6 +460,7 @@ set -e
 set -o pipefail
 
 DOWNLOAD_ROOT="${1:-${DOWNLOAD_ROOT:-/data/downloads}}"
+URL_DOWNLOADER_ENABLED="${URL_DOWNLOADER_ENABLED:-true}"
 INDEX_FILE="$DOWNLOAD_ROOT/index.html"
 
 if [ ! -d "$DOWNLOAD_ROOT" ]; then
@@ -473,6 +483,7 @@ import sys
 from urllib.parse import quote
 
 root, output = sys.argv[1], sys.argv[2]
+url_downloader_enabled = os.environ.get("URL_DOWNLOADER_ENABLED", "true").lower() == "true"
 exclude = {"index.html", "generate_html.sh"}
 
 entries = []
@@ -530,28 +541,29 @@ with open(output, "w", encoding="utf-8") as f:
     f.write("</style>\n</head>\n<body>\n")
     f.write("<h1>Downloads</h1>\n")
     f.write(f'<div class="meta">Generated at {html.escape(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))}</div>\n')
-    f.write('<div class="actions"><button id="refresh-list" type="button">刷新文件列表</button><span id="refresh-status" class="meta"></span></div>\n')
-    f.write('<section class="downloader">\n')
-    f.write('<div class="downloader-header"><h2>URL 下载</h2><button id="toggle-url-download" type="button" aria-expanded="false">展开</button></div>\n')
-    f.write('<div id="url-download-body" class="downloader-body hidden">\n')
-    f.write('<form id="url-download-form">\n')
-    f.write('<label for="download-url">下载链接</label>\n')
-    f.write('<input id="download-url" name="url" type="url" placeholder="https://example.com/file.tar.gz" required>\n')
-    f.write('<label for="download-filename">保存文件名（可选）</label>\n')
-    f.write('<input id="download-filename" name="filename" type="text" placeholder="留空则自动使用 URL 文件名">\n')
-    f.write('<label for="download-dir">保存目录（相对下载根目录，可选）</label>\n')
-    f.write('<select id="download-dir" name="directory">\n')
-    f.write('<option value="">/</option>\n')
-    for directory in directories:
-        safe_dir = html.escape(directory)
-        f.write(f'<option value="{safe_dir}">{safe_dir}/</option>\n')
-    f.write("</select>\n")
-    f.write("<button type=\"submit\">开始下载</button>\n")
-    f.write("</form>\n")
-    f.write('<div id="download-status" class="download-status">等待提交下载任务。</div>\n')
-    f.write('<div class="progress"><div id="download-progress" class="progress-bar"></div></div>\n')
-    f.write("</div>\n")
-    f.write("</section>\n")
+    if url_downloader_enabled:
+        f.write('<div class="actions"><button id="refresh-list" type="button">刷新文件列表</button><span id="refresh-status" class="meta"></span></div>\n')
+        f.write('<section class="downloader">\n')
+        f.write('<div class="downloader-header"><h2>URL 下载</h2><button id="toggle-url-download" type="button" aria-expanded="false">展开</button></div>\n')
+        f.write('<div id="url-download-body" class="downloader-body hidden">\n')
+        f.write('<form id="url-download-form">\n')
+        f.write('<label for="download-url">下载链接</label>\n')
+        f.write('<input id="download-url" name="url" type="url" placeholder="https://example.com/file.tar.gz" required>\n')
+        f.write('<label for="download-filename">保存文件名（可选）</label>\n')
+        f.write('<input id="download-filename" name="filename" type="text" placeholder="留空则自动使用 URL 文件名">\n')
+        f.write('<label for="download-dir">保存目录（相对下载根目录，可选）</label>\n')
+        f.write('<select id="download-dir" name="directory">\n')
+        f.write('<option value="">/</option>\n')
+        for directory in directories:
+            safe_dir = html.escape(directory)
+            f.write(f'<option value="{safe_dir}">{safe_dir}/</option>\n')
+        f.write("</select>\n")
+        f.write("<button type=\"submit\">开始下载</button>\n")
+        f.write("</form>\n")
+        f.write('<div id="download-status" class="download-status">等待提交下载任务。</div>\n')
+        f.write('<div class="progress"><div id="download-progress" class="progress-bar"></div></div>\n')
+        f.write("</div>\n")
+        f.write("</section>\n")
     f.write("<table>\n<thead><tr><th>Name</th><th>Type</th><th>Size</th><th>Modified</th></tr></thead>\n<tbody>\n")
     for is_file_sort, name, path in entries:
         is_dir = os.path.isdir(path)
@@ -564,15 +576,18 @@ with open(output, "w", encoding="utf-8") as f:
         kind = "Directory" if is_dir else "File"
         f.write(f'<tr><td><a{css} href="{href}">{display}</a></td><td>{kind}</td><td>{size}</td><td>{mtime}</td></tr>\n')
     f.write("</tbody>\n</table>\n")
-    f.write("<script>\n")
-    f.write("const form=document.getElementById('url-download-form');const statusBox=document.getElementById('download-status');const bar=document.getElementById('download-progress');const refreshBtn=document.getElementById('refresh-list');const refreshStatus=document.getElementById('refresh-status');const toggleBtn=document.getElementById('toggle-url-download');const downloadBody=document.getElementById('url-download-body');\n")
-    f.write("function fmt(n){if(!n&&n!==0)return '-';const u=['B','KB','MB','GB','TB'];let i=0;while(n>=1024&&i<u.length-1){n/=1024;i++;}return (i?n.toFixed(1):n.toFixed(0))+' '+u[i];}\n")
-    f.write("function show(s,cls){statusBox.className='download-status '+(cls||'');statusBox.textContent=s;}\n")
-    f.write("toggleBtn.addEventListener('click',()=>{const hidden=downloadBody.classList.toggle('hidden');toggleBtn.textContent=hidden?'展开':'收起';toggleBtn.setAttribute('aria-expanded',String(!hidden));});\n")
-    f.write("async function poll(id){const r=await fetch('/url-download/status?id='+encodeURIComponent(id));const j=await r.json();const pct=j.total?Math.floor(j.downloaded*100/j.total):0;bar.style.width=(j.total?pct:0)+'%';show(j.message+' | '+fmt(j.downloaded)+(j.total?' / '+fmt(j.total)+' ('+pct+'%)':''),j.status==='done'?'ok':(j.status==='error'?'err':''));if(j.status==='done'){bar.style.width='100%';setTimeout(()=>location.reload(),1200);return;}if(j.status==='error')return;setTimeout(()=>poll(id),1000);}\n")
-    f.write("form.addEventListener('submit',async e=>{e.preventDefault();bar.style.width='0';show('正在创建下载任务...');try{const body=new URLSearchParams(new FormData(form));const r=await fetch('/url-download',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body});const j=await r.json();if(!r.ok){show(j.error||'创建下载任务失败','err');return;}show('下载任务已开始');poll(j.id);}catch(err){show('创建下载任务失败: '+err,'err');}});\n")
-    f.write("refreshBtn.addEventListener('click',async()=>{refreshBtn.disabled=true;refreshStatus.textContent='正在刷新...';try{const r=await fetch('/url-download/refresh',{method:'POST'});const j=await r.json();if(!r.ok){refreshStatus.textContent=j.error||'刷新失败';refreshBtn.disabled=false;return;}refreshStatus.textContent='刷新完成，正在重新加载页面...';setTimeout(()=>location.reload(),500);}catch(err){refreshStatus.textContent='刷新失败: '+err;refreshBtn.disabled=false;}});\n")
-    f.write("</script>\n</body>\n</html>\n")
+    if url_downloader_enabled:
+        f.write("<script>\n")
+        f.write("const form=document.getElementById('url-download-form');const statusBox=document.getElementById('download-status');const bar=document.getElementById('download-progress');const refreshBtn=document.getElementById('refresh-list');const refreshStatus=document.getElementById('refresh-status');const toggleBtn=document.getElementById('toggle-url-download');const downloadBody=document.getElementById('url-download-body');\n")
+        f.write("function fmt(n){if(!n&&n!==0)return '-';const u=['B','KB','MB','GB','TB'];let i=0;while(n>=1024&&i<u.length-1){n/=1024;i++;}return (i?n.toFixed(1):n.toFixed(0))+' '+u[i];}\n")
+        f.write("async function jsonFetch(url,opts){const r=await fetch(url,opts);const ct=r.headers.get('content-type')||'';if(!ct.includes('application/json')){throw new Error('服务未返回 JSON，请确认 url-downloader.service 已启动且 nginx 反向代理已生效');}const j=await r.json();return {r,j};}\n")
+        f.write("function show(s,cls){statusBox.className='download-status '+(cls||'');statusBox.textContent=s;}\n")
+        f.write("toggleBtn.addEventListener('click',()=>{const hidden=downloadBody.classList.toggle('hidden');toggleBtn.textContent=hidden?'展开':'收起';toggleBtn.setAttribute('aria-expanded',String(!hidden));});\n")
+        f.write("async function poll(id){const {r,j}=await jsonFetch('/url-download/status?id='+encodeURIComponent(id));const pct=j.total?Math.floor(j.downloaded*100/j.total):0;bar.style.width=(j.total?pct:0)+'%';show(j.message+' | '+fmt(j.downloaded)+(j.total?' / '+fmt(j.total)+' ('+pct+'%)':''),j.status==='done'?'ok':(j.status==='error'?'err':''));if(j.status==='done'){bar.style.width='100%';setTimeout(()=>location.reload(),1200);return;}if(j.status==='error')return;setTimeout(()=>poll(id),1000);}\n")
+        f.write("form.addEventListener('submit',async e=>{e.preventDefault();bar.style.width='0';show('正在创建下载任务...');try{const body=new URLSearchParams(new FormData(form));const {r,j}=await jsonFetch('/url-download',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body});if(!r.ok){show(j.error||'创建下载任务失败','err');return;}show('下载任务已开始');poll(j.id);}catch(err){show('创建下载任务失败: '+err.message,'err');}});\n")
+        f.write("refreshBtn.addEventListener('click',async()=>{refreshBtn.disabled=true;refreshStatus.textContent='正在刷新...';try{const {r,j}=await jsonFetch('/url-download/refresh',{method:'POST'});if(!r.ok){refreshStatus.textContent=j.error||'刷新失败';refreshBtn.disabled=false;return;}refreshStatus.textContent='刷新完成，正在重新加载页面...';setTimeout(()=>location.reload(),500);}catch(err){refreshStatus.textContent='刷新失败: '+err.message;refreshBtn.disabled=false;}});\n")
+        f.write("</script>\n")
+    f.write("</body>\n</html>\n")
 PY
 else
     {
@@ -580,18 +595,20 @@ else
         echo '<html lang="zh-CN">'
         echo '<head><meta charset="UTF-8"><title>Downloads</title></head>'
         echo '<body><h1>Downloads</h1>'
-        echo '<p><form method="POST" action="/url-download/refresh"><button type="submit">刷新文件列表</button></form></p>'
-        echo '<section>'
-        echo '<details><summary><strong>URL 下载</strong></summary>'
-        echo '<form method="POST" action="/url-download">'
-        echo '<p><input name="url" type="url" placeholder="https://example.com/file.tar.gz" required style="width:80%"></p>'
-        echo '<p><input name="filename" type="text" placeholder="保存文件名（可选）" style="width:80%"></p>'
-        echo '<p><input name="directory" type="text" placeholder="保存目录，例如 iso/ubuntu（可选）" style="width:80%"></p>'
-        echo '<button type="submit">开始下载</button>'
-        echo '</form>'
-        echo '<p>当前系统没有 python3，首页不会显示异步下载进度。</p>'
-        echo '</details>'
-        echo '</section>'
+        if [ "$URL_DOWNLOADER_ENABLED" = "true" ]; then
+            echo '<p><form method="POST" action="/url-download/refresh"><button type="submit">刷新文件列表</button></form></p>'
+            echo '<section>'
+            echo '<details><summary><strong>URL 下载</strong></summary>'
+            echo '<form method="POST" action="/url-download">'
+            echo '<p><input name="url" type="url" placeholder="https://example.com/file.tar.gz" required style="width:80%"></p>'
+            echo '<p><input name="filename" type="text" placeholder="保存文件名（可选）" style="width:80%"></p>'
+            echo '<p><input name="directory" type="text" placeholder="保存目录，例如 iso/ubuntu（可选）" style="width:80%"></p>'
+            echo '<button type="submit">开始下载</button>'
+            echo '</form>'
+            echo '<p>当前系统没有 python3，首页不会显示异步下载进度。</p>'
+            echo '</details>'
+            echo '</section>'
+        fi
         echo '<ul>'
         cd "$DOWNLOAD_ROOT"
         for entry in *; do
