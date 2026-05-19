@@ -1,0 +1,186 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
+AUTH_FILE="$CODEX_HOME/auth.json"
+PROFILE_DIR="$CODEX_HOME/account_profiles"
+CURRENT_FILE="$PROFILE_DIR/.current_profile"
+SCRIPT_NAME="$(basename "$0")"
+
+mkdir -p "$PROFILE_DIR"
+
+red() { printf '\033[31m%s\033[0m\n' "$1"; }
+green() { printf '\033[32m%s\033[0m\n' "$1"; }
+yellow() { printf '\033[33m%s\033[0m\n' "$1"; }
+
+usage() {
+  cat <<USAGE
+Usage:
+  $SCRIPT_NAME list
+  $SCRIPT_NAME save <profile_name>
+  $SCRIPT_NAME switch <profile_name>
+  $SCRIPT_NAME delete <profile_name>
+  $SCRIPT_NAME current
+
+Notes:
+  1) Login in Codex first.
+  2) Run save <profile_name> to store current auth state.
+  3) Run switch <profile_name> to switch quickly.
+USAGE
+}
+
+check_auth() {
+  if [ ! -f "$AUTH_FILE" ]; then
+    red "Auth file not found: $AUTH_FILE"
+    red "Please login with Codex first."
+    exit 1
+  fi
+}
+
+profile_path() {
+  local name="$1"
+  printf '%s/%s.auth.json' "$PROFILE_DIR" "$name"
+}
+
+list_profiles() {
+  local found=0
+  local f n
+
+  echo "Saved profiles:"
+  for f in "$PROFILE_DIR"/*.auth.json; do
+    [ -e "$f" ] || continue
+    found=1
+    n="$(basename "$f" .auth.json)"
+    if [ -f "$CURRENT_FILE" ] && [ "$(cat "$CURRENT_FILE")" = "$n" ]; then
+      echo "  - $n (current)"
+    else
+      echo "  - $n"
+    fi
+  done
+
+  if [ "$found" -eq 0 ]; then
+    yellow "  (none)"
+  fi
+}
+
+save_profile() {
+  local name="$1"
+  local dst
+
+  check_auth
+  dst="$(profile_path "$name")"
+  cp "$AUTH_FILE" "$dst"
+  chmod 600 "$dst"
+  green "Saved current account as profile: $name"
+}
+
+switch_profile() {
+  local name="$1"
+  local src backup_name backup_path
+
+  src="$(profile_path "$name")"
+  if [ ! -f "$src" ]; then
+    red "Profile not found: $name"
+    exit 1
+  fi
+
+  if [ -f "$AUTH_FILE" ]; then
+    backup_name="auto_backup_$(date +%Y%m%d_%H%M%S)"
+    backup_path="$(profile_path "$backup_name")"
+    cp "$AUTH_FILE" "$backup_path"
+    chmod 600 "$backup_path"
+    yellow "Auto-backed up current auth as: $backup_name"
+  fi
+
+  cp "$src" "$AUTH_FILE"
+  chmod 600 "$AUTH_FILE"
+  printf '%s\n' "$name" > "$CURRENT_FILE"
+
+  green "Switched to profile: $name"
+  echo "Please restart your current Codex session to apply changes."
+}
+
+delete_profile() {
+  local name="$1"
+  local p
+
+  p="$(profile_path "$name")"
+  if [ ! -f "$p" ]; then
+    red "Profile not found: $name"
+    exit 1
+  fi
+
+  rm -f "$p"
+  if [ -f "$CURRENT_FILE" ] && [ "$(cat "$CURRENT_FILE")" = "$name" ]; then
+    rm -f "$CURRENT_FILE"
+  fi
+  green "Deleted profile: $name"
+}
+
+show_current() {
+  if [ -f "$CURRENT_FILE" ]; then
+    echo "Current profile marker: $(cat "$CURRENT_FILE")"
+  else
+    yellow "No current profile marker found."
+  fi
+}
+
+interactive_menu() {
+  local choice name
+
+  echo "========== Codex Account Switch =========="
+  echo "1) List profiles"
+  echo "2) Save current profile"
+  echo "3) Switch profile"
+  echo "4) Delete profile"
+  echo "5) Show current marker"
+  echo "0) Exit"
+  printf 'Choose: '
+  IFS= read -r choice
+
+  case "$choice" in
+    1) list_profiles ;;
+    2)
+      printf 'Enter profile name: '
+      IFS= read -r name
+      [ -n "$name" ] || { red "Profile name cannot be empty"; exit 1; }
+      save_profile "$name"
+      ;;
+    3)
+      printf 'Enter target profile name: '
+      IFS= read -r name
+      [ -n "$name" ] || { red "Profile name cannot be empty"; exit 1; }
+      switch_profile "$name"
+      ;;
+    4)
+      printf 'Enter profile name to delete: '
+      IFS= read -r name
+      [ -n "$name" ] || { red "Profile name cannot be empty"; exit 1; }
+      delete_profile "$name"
+      ;;
+    5) show_current ;;
+    0) exit 0 ;;
+    *) red "Invalid option"; exit 1 ;;
+  esac
+}
+
+cmd="${1:-}"
+case "$cmd" in
+  "") interactive_menu ;;
+  list) list_profiles ;;
+  save)
+    [ "$#" -eq 2 ] || { usage; exit 1; }
+    save_profile "$2"
+    ;;
+  switch)
+    [ "$#" -eq 2 ] || { usage; exit 1; }
+    switch_profile "$2"
+    ;;
+  delete)
+    [ "$#" -eq 2 ] || { usage; exit 1; }
+    delete_profile "$2"
+    ;;
+  current) show_current ;;
+  -h|--help|help) usage ;;
+  *) usage; exit 1 ;;
+esac
