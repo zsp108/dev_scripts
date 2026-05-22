@@ -42,6 +42,23 @@ profile_path() {
   printf '%s/%s.auth.json' "$PROFILE_DIR" "$name"
 }
 
+current_profile() {
+  if [ -f "$CURRENT_FILE" ]; then
+    cat "$CURRENT_FILE"
+  fi
+}
+
+show_profile_file() {
+  local name="$1"
+
+  if [ -n "$name" ]; then
+    echo "Current profile: $name"
+    echo "Current profile file: $(profile_path "$name")"
+  else
+    yellow "No current profile marker found."
+  fi
+}
+
 list_profiles() {
   local found=0
   local f n
@@ -71,12 +88,14 @@ save_profile() {
   dst="$(profile_path "$name")"
   cp "$AUTH_FILE" "$dst"
   chmod 600 "$dst"
+  printf '%s\n' "$name" > "$CURRENT_FILE"
   green "Saved current account as profile: $name"
+  show_profile_file "$name"
 }
 
 switch_profile() {
   local name="$1"
-  local src backup_name backup_path
+  local src current_name current_path backup_name backup_path
 
   src="$(profile_path "$name")"
   if [ ! -f "$src" ]; then
@@ -85,11 +104,23 @@ switch_profile() {
   fi
 
   if [ -f "$AUTH_FILE" ]; then
-    backup_name="auto_backup_$(date +%Y%m%d_%H%M%S)"
-    backup_path="$(profile_path "$backup_name")"
-    cp "$AUTH_FILE" "$backup_path"
-    chmod 600 "$backup_path"
-    yellow "Auto-backed up current auth as: $backup_name"
+    current_name="$(current_profile)"
+    current_path=""
+    if [ -n "$current_name" ]; then
+      current_path="$(profile_path "$current_name")"
+    fi
+
+    if [ -n "$current_path" ] && [ -f "$current_path" ] && cmp -s "$AUTH_FILE" "$current_path"; then
+      yellow "Current auth matches saved profile '$current_name'; skipped backup."
+    elif cmp -s "$AUTH_FILE" "$src"; then
+      yellow "Current auth already matches profile '$name'; skipped backup."
+    else
+      backup_name="auto_backup_$(date +%Y%m%d_%H%M%S)"
+      backup_path="$(profile_path "$backup_name")"
+      cp "$AUTH_FILE" "$backup_path"
+      chmod 600 "$backup_path"
+      yellow "Auto-backed up current auth as: $backup_name"
+    fi
   fi
 
   cp "$src" "$AUTH_FILE"
@@ -97,6 +128,7 @@ switch_profile() {
   printf '%s\n' "$name" > "$CURRENT_FILE"
 
   green "Switched to profile: $name"
+  show_profile_file "$name"
   echo "Please restart your current Codex session to apply changes."
 }
 
@@ -118,11 +150,7 @@ delete_profile() {
 }
 
 show_current() {
-  if [ -f "$CURRENT_FILE" ]; then
-    echo "Current profile marker: $(cat "$CURRENT_FILE")"
-  else
-    yellow "No current profile marker found."
-  fi
+  show_profile_file "$(current_profile)"
 }
 
 interactive_menu() {

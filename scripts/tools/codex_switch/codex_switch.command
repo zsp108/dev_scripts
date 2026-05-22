@@ -40,6 +40,23 @@ profile_path() {
   printf "%s/%s.auth.json" "$PROFILE_DIR" "$name"
 }
 
+current_profile() {
+  if [[ -f "$CURRENT_FILE" ]]; then
+    <"$CURRENT_FILE"
+  fi
+}
+
+show_profile_file() {
+  local name="$1"
+
+  if [[ -n "$name" ]]; then
+    echo "当前账号: $name"
+    echo "当前配置文件: $(profile_path "$name")"
+  else
+    yellow "当前没有标记账号（可能是首次使用或手工登录后未 save/switch）。"
+  fi
+}
+
 list_profiles() {
   local found=0
   echo "已保存账号列表:"
@@ -65,7 +82,9 @@ save_profile() {
   dst="$(profile_path "$name")"
   cp "$AUTH_FILE" "$dst"
   chmod 600 "$dst"
+  echo "$name" > "$CURRENT_FILE"
   green "已保存当前账号为: $name"
+  show_profile_file "$name"
 }
 
 switch_profile() {
@@ -78,16 +97,30 @@ switch_profile() {
   fi
 
   if [[ -f "$AUTH_FILE" ]]; then
-    local backup_name="auto_backup_$(date +%Y%m%d_%H%M%S)"
-    cp "$AUTH_FILE" "$(profile_path "$backup_name")"
-    chmod 600 "$(profile_path "$backup_name")"
-    yellow "已自动备份当前登录态为: $backup_name"
+    local current_name
+    local current_path=""
+    current_name="$(current_profile)"
+    if [[ -n "$current_name" ]]; then
+      current_path="$(profile_path "$current_name")"
+    fi
+
+    if [[ -n "$current_path" && -f "$current_path" ]] && cmp -s "$AUTH_FILE" "$current_path"; then
+      yellow "当前登录态与已保存账号 '$current_name' 一致，跳过备份。"
+    elif cmp -s "$AUTH_FILE" "$src"; then
+      yellow "当前登录态已经是账号 '$name'，跳过备份。"
+    else
+      local backup_name="auto_backup_$(date +%Y%m%d_%H%M%S)"
+      cp "$AUTH_FILE" "$(profile_path "$backup_name")"
+      chmod 600 "$(profile_path "$backup_name")"
+      yellow "已自动备份当前登录态为: $backup_name"
+    fi
   fi
 
   cp "$src" "$AUTH_FILE"
   chmod 600 "$AUTH_FILE"
   echo "$name" > "$CURRENT_FILE"
   green "已切换到账号: $name"
+  show_profile_file "$name"
   echo "请重启当前 Codex 会话以生效。"
 }
 
@@ -107,11 +140,7 @@ delete_profile() {
 }
 
 show_current() {
-  if [[ -f "$CURRENT_FILE" ]]; then
-    echo "当前标记账号: $(<"$CURRENT_FILE")"
-  else
-    yellow "当前没有标记账号（可能是首次使用或手工登录后未 save/switch）。"
-  fi
+  show_profile_file "$(current_profile)"
 }
 
 interactive_menu() {
