@@ -1,0 +1,31 @@
+Codex 多账号切换说明
+
+脚本:
+- macOS: ~/Desktop/codex_switch/codex_switch.command
+- Linux(Ubuntu/RHEL7/RHEL8): ~/Desktop/codex_switch/codex_switch
+
+账号配置保存目录:
+- ~/.codex/account_profiles/
+
+首次配置建议流程:
+1. 先在终端登录账号A（正常使用 codex 登录流程）
+2. 运行: ~/Desktop/codex_switch/codex_switch save accountA
+3. 切换到账号B并登录
+4. 运行: ~/Desktop/codex_switch/codex_switch save accountB
+
+常用命令:
+- ~/Desktop/codex_switch/codex_switch list
+- ~/Desktop/codex_switch/codex_switch save <profile_name>
+- ~/Desktop/codex_switch/codex_switch switch <profile_name>
+- ~/Desktop/codex_switch/codex_switch delete <profile_name>
+- ~/Desktop/codex_switch/codex_switch current
+
+示例:
+- ~/Desktop/codex_switch/codex_switch save work
+- ~/Desktop/codex_switch/codex_switch save personal
+- ~/Desktop/codex_switch/codex_switch switch work
+
+说明:
+- 也可以直接执行脚本进入交互菜单。
+- 切换后请重启当前 Codex 会话以生效。
+- Linux 首次使用前需执行: chmod +x ~/Desktop/codex_switch/codex_switch
