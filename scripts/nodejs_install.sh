@@ -174,6 +174,21 @@ install_codex_cli() {
 }
 
 # -----------------------------
+# 安装 gemini CLI
+# -----------------------------
+install_gemini_cli() {
+    if ! command -v npm >/dev/null 2>&1; then
+        log error "npm 未找到，无法安装 @google/gemini-cli"
+    fi
+
+    log info "开始安装 @google/gemini-cli"
+
+    sudo npm install -g @google/gemini-cli || log error "安装 gemini 失败"
+
+    log info "gemini CLI 安装完成"
+}
+
+# -----------------------------
 # 主流程
 # -----------------------------
 log info "开始安装 Node.js LTS + @openai/codex"
