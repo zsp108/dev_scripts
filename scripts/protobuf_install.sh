@@ -1,8 +1,8 @@
 #!/bin/bash
 #
 # 自动下载并编译安装 Protobuf 及 protoc-gen-go 插件
-# 用法：sudo ./protobuf_install.sh [protobuf_version] [protoc_gen_go_version]
-# 示例：sudo ./protobuf_install.sh v3.21.1 v1.5.2
+# 用法：./protobuf_install.sh [protobuf_version] [protoc_gen_go_version]
+# 示例：./protobuf_install.sh v3.21.1 v1.5.2
 
 set -e
 
@@ -36,16 +36,18 @@ function log {
     }
 }
 
-# 检查用户权限
+# 检查用户权限并设置 SUDO 前缀命令
 if [ "$EUID" -ne 0 ]; then
     # 非root用户，检查是否有sudo权限
     if ! sudo -n true 2>/dev/null; then
         log error "当前用户没有sudo权限，请以root用户或使用sudo命令执行此脚本"
     else
-        log info "检测到非root用户但有sudo权限，继续执行..."
+        log info "检测到非root用户但有sudo权限，后续系统级命令将使用 sudo 执行..."
+        SUDO="sudo"
     fi
 else
     log info "检测到root用户执行，继续执行..."
+    SUDO=""
 fi
 
 # 处理 Protobuf 版本参数
@@ -68,7 +70,7 @@ else
   log info "使用指定 protoc-gen-go 版本: $protoc_gen_go_version"
 fi
 
-# 获取原始用户信息（当使用sudo执行时）
+# 获取原始用户信息（当使用sudo执行或无sudo执行时）
 if [ -n "$SUDO_USER" ]; then
     ORIGINAL_USER="$SUDO_USER"
     ORIGINAL_HOME=$(eval echo ~$SUDO_USER)
@@ -91,10 +93,15 @@ if command -v protoc >/dev/null 2>&1; then
         skip_protobuf_build=true
     else
         log info "已安装的版本 ($cur_pb_version) 与指定版本 ($protobuf_version) 不同"
-        read -p "是否覆盖并重新编译安装 Protobuf $protobuf_version？(y/n): " is_reinstall_pb
-        if [[ "$is_reinstall_pb" != "y" ]]; then
-            log info "用户选择跳过编译安装 Protobuf"
-            skip_protobuf_build=true
+        # CI 非交互模式自动跳过提示或选择更新
+        if [ -t 0 ]; then
+            read -p "是否覆盖并重新编译安装 Protobuf $protobuf_version？(y/n): " is_reinstall_pb
+            if [[ "$is_reinstall_pb" != "y" ]]; then
+                log info "用户选择跳过编译安装 Protobuf"
+                skip_protobuf_build=true
+            fi
+        else
+            log info "非交互终端环境，继续自动进行 Protobuf 重新编译安装"
         fi
     fi
 fi
@@ -121,19 +128,19 @@ install_dependencies() {
     case $OS in
         'rhel'|'centos'|'fedora'|'rocky'|'almalinux')
             if command -v dnf >/dev/null 2>&1; then
-                dnf update -y
-                dnf groupinstall -y "Development Tools"
-                dnf install -y autoconf automake libtool curl make gcc-c++ unzip git golang
+                $SUDO dnf update -y
+                $SUDO dnf groupinstall -y "Development Tools"
+                $SUDO dnf install -y autoconf automake libtool curl make gcc-c++ unzip git golang
             else
-                yum update -y
-                yum groupinstall -y "Development Tools"
-                yum install -y epel-release.noarch && yum update -y
-                yum install -y autoconf automake libtool curl make gcc-c++ unzip git golang
+                $SUDO yum update -y
+                $SUDO yum groupinstall -y "Development Tools"
+                $SUDO yum install -y epel-release.noarch && $SUDO yum update -y
+                $SUDO yum install -y autoconf automake libtool curl make gcc-c++ unzip git golang
             fi
             ;;
         'ubuntu'|'debian')
-            apt update -y
-            apt install -y build-essential autoconf automake libtool curl make g++ unzip git golang-go
+            $SUDO apt update -y
+            $SUDO apt install -y build-essential autoconf automake libtool curl make g++ unzip git golang-go
             ;;
         *)
             log error "不支持的操作系统: $OS，请手动安装依赖包"
@@ -178,11 +185,11 @@ if [ "$skip_protobuf_build" != "true" ]; then
     make -j$(nproc) || log error "编译失败"
 
     log info "正在安装 Protobuf..."
-    make install -j$(nproc) || log error "安装失败"
+    $SUDO make install -j$(nproc) || log error "安装失败"
 
     # 刷新动态链接库缓存（防止 libprotobuf.so 找不到报错）
     if command -v ldconfig >/dev/null 2>&1; then
-        ldconfig || log warn "ldconfig 刷新失败，如遇到库引用报错请手动运行 sudo ldconfig"
+        $SUDO ldconfig || log warn "ldconfig 刷新失败，如遇到库引用报错请手动运行 sudo ldconfig"
     fi
 
     log info "Protobuf 源码编译安装完成"
@@ -206,37 +213,20 @@ install_protoc_gen_go() {
         return 1
     fi
 
-    # 使用国内 GOPROXY 加速
     export GOPROXY="https://goproxy.cn,direct"
 
     log info "执行 go install github.com/golang/protobuf/protoc-gen-go@$protoc_gen_go_version ..."
 
-    if [ "$ORIGINAL_USER" != "$USER" ]; then
-        sudo -u "$ORIGINAL_USER" GOPROXY="https://goproxy.cn,direct" go install "github.com/golang/protobuf/protoc-gen-go@$protoc_gen_go_version" || {
-            log warn "以用户 $ORIGINAL_USER 执行 go install 失败，尝试 root 权限执行..."
-            go install "github.com/golang/protobuf/protoc-gen-go@$protoc_gen_go_version"
-        }
-    else
-        go install "github.com/golang/protobuf/protoc-gen-go@$protoc_gen_go_version"
-    fi
+    go install "github.com/golang/protobuf/protoc-gen-go@$protoc_gen_go_version"
 
-    # 获取生成可执行文件的位置
     local user_gopath
-    if [ "$ORIGINAL_USER" != "$USER" ]; then
-        user_gopath=$(sudo -u "$ORIGINAL_USER" go env GOPATH 2>/dev/null || echo "$ORIGINAL_HOME/go")
-    else
-        user_gopath=$(go env GOPATH 2>/dev/null || echo "$HOME/go")
-    fi
-
+    user_gopath=$(go env GOPATH 2>/dev/null || echo "$HOME/go")
     local gen_go_bin="$user_gopath/bin/protoc-gen-go"
-    if [ ! -f "$gen_go_bin" ]; then
-        gen_go_bin="$(go env GOPATH 2>/dev/null)/bin/protoc-gen-go"
-    fi
 
-    # 将 protoc-gen-go 复制到系统标准目录，确保所有用户可用
+    # 将 protoc-gen-go 复制到系统标准目录 /usr/local/bin
     if [ -f "$gen_go_bin" ]; then
-        cp -f "$gen_go_bin" /usr/local/bin/protoc-gen-go
-        chmod +x /usr/local/bin/protoc-gen-go
+        $SUDO cp -f "$gen_go_bin" /usr/local/bin/protoc-gen-go
+        $SUDO chmod +x /usr/local/bin/protoc-gen-go
         log info "已成功安装 protoc-gen-go 并发布至 /usr/local/bin/protoc-gen-go"
     else
         log warn "未在预期路径找到 protoc-gen-go，请检查 GOPATH/GOBIN 设置"
@@ -264,7 +254,7 @@ EOF
     fi
 }
 
-# 为当前用户及原始用户配置环境变量
+# 配置环境变量
 configure_env "$HOME"
 if [ "$ORIGINAL_USER" != "$USER" ] && [ "$ORIGINAL_HOME" != "$HOME" ]; then
     log info "为原始用户 $ORIGINAL_USER 配置环境变量..."
@@ -285,4 +275,3 @@ rm -rf /tmp/protobuf
 log info "临时文件清理完成"
 
 log info "Protobuf 及 protoc-gen-go 自动化安装完成！"
-log info "请执行 'source ~/.bashrc' 或重新打开终端使环境变量生效。"
