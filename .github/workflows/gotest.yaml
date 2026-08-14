@@ -36,3 +36,9 @@ jobs:
 
     - name: env check
       run: make check
+
+    - name: vim go install test
+      run: scripts/vim_go_install.sh
+    
+    - name: protobuf install test
+      run: scripts/protobuf_install.sh
