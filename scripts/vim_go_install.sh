@@ -16,21 +16,21 @@ function log {
     local logtype
     logtype=$1
     msg=$2
-    datetime=`date +'%F %H:%M:%S'`
+    datetime=$(date +'%F %H:%M:%S')
     logformat="${datetime} ${FUNCNAME[@]/log/} [line:${BASH_LINENO[0]}] ${logtype}:${msg}"
     {
     case $logtype in
         debug)
-            echo "${logformat}" &>> $logfile;;
+            echo "${logformat}" >> "$logfile" 2>&1;;
         info)
             echo -e "\033[32m $datetime [info] ${msg} \t \033[0m"
-            echo "${logformat}" &>> $logfile;;
+            echo "${logformat}" >> "$logfile" 2>&1;;
         warn)
             echo -e "\033[33m $datetime [WARN] ${msg} \t \033[0m"
-            echo "${logformat}" &>> $logfile;;
+            echo "${logformat}" >> "$logfile" 2>&1;;
         error)
             echo -e "\033[31m $datetime [ERROR] ${msg} \033[0m"
-            echo "${logformat}" &>> $logfile
+            echo "${logformat}" >> "$logfile" 2>&1
             exit 1;;
     esac
     }
@@ -59,16 +59,22 @@ fi
 # 获取原始用户信息（当使用 sudo 执行时）
 if [ -n "$SUDO_USER" ]; then
     ORIGINAL_USER="$SUDO_USER"
-    ORIGINAL_HOME=$(eval echo ~$SUDO_USER)
-    log info "检测到 sudo 执行，原始用户: $ORIGINAL_USER, 原始家目录: $ORIGINAL_HOME"
+    ORIGINAL_HOME=$(eval echo "~$SUDO_USER")
+    ORIGINAL_GROUP=$(id -gn "$SUDO_USER" 2>/dev/null || echo "$SUDO_USER")
+    log info "检测到 sudo 执行，原始用户: $ORIGINAL_USER, 原始家目录: $ORIGINAL_HOME, 用户组: $ORIGINAL_GROUP"
 else
     ORIGINAL_USER="$USER"
     ORIGINAL_HOME="$HOME"
-    log info "直接执行，当前用户: $ORIGINAL_USER, 当前家目录: $ORIGINAL_HOME"
+    ORIGINAL_GROUP=$(id -gn "$USER" 2>/dev/null || echo "$USER")
+    log info "直接执行，当前用户: $ORIGINAL_USER, 当前家目录: $ORIGINAL_HOME, 用户组: $ORIGINAL_GROUP"
 fi
 
 # 获取系统版本信息
-if [ -f /etc/os-release ]; then
+UNAME_S=$(uname -s)
+if [ "$UNAME_S" = "Darwin" ]; then
+    OS="darwin"
+    VERSION=$(sw_vers -productVersion 2>/dev/null || uname -r)
+elif [ -f /etc/os-release ]; then
     . /etc/os-release
     OS=$ID
     VERSION=$VERSION_ID
@@ -99,6 +105,11 @@ install_dependencies() {
             'ubuntu'|'debian')
                 apt update -y
                 apt install -y $need_install
+                ;;
+            'darwin')
+                if command -v brew >/dev/null 2>&1; then
+                    brew install $need_install || true
+                fi
                 ;;
             *)
                 log warn "无法自动安装软件包:$need_install，请确保已手动安装"
@@ -133,12 +144,17 @@ install_vim_go_plugin() {
     # 判断目录是否已存在
     if [ -d "$vim_go_target_dir" ]; then
         log info "检测到已存在 vim-go 插件目录"
-        read -p "是否删除并重新克隆安装 vim-go？(y/n): " is_reclone
-        if [[ "$is_reclone" == "y" ]]; then
-            rm -rf "$vim_go_target_dir"
-            log info "已删除旧版 vim-go"
+        if [ -t 0 ]; then
+            read -p "是否删除并重新克隆安装 vim-go？(y/n): " is_reclone
+            if [ "$is_reclone" = "y" ]; then
+                rm -rf "$vim_go_target_dir"
+                log info "已删除旧版 vim-go"
+            else
+                log info "跳过 vim-go 插件克隆，保持现有目录"
+                return 0
+            fi
         else
-            log info "跳过 vim-go 插件克隆，保持现有目录"
+            log info "非交互终端，保持现有 vim-go 目录"
             return 0
         fi
     fi
@@ -176,7 +192,7 @@ install_go_binaries() {
     # 准备临时测试 Go 文件，触发 vim 的 filetype=go
     local test_file="/tmp/test_vim_go_init.go"
     echo 'package main' > "$test_file"
-    [ "$ORIGINAL_USER" != "$USER" ] && chown "$ORIGINAL_USER:$ORIGINAL_USER" "$test_file" 2>/dev/null || true
+    [ "$ORIGINAL_USER" != "$USER" ] && (chown "$ORIGINAL_USER:$ORIGINAL_GROUP" "$test_file" 2>/dev/null || chown "$ORIGINAL_USER" "$test_file" 2>/dev/null || true)
 
     log info "通过 Vim 静默模式自动执行 :GoInstallBinaries ..."
 
@@ -218,7 +234,7 @@ let g:go_fmt_command = "goimports"
 let g:go_autodetect_gopath = 1
 let g:go_list_type = "quickfix"
 EOF
-        [ "$ORIGINAL_USER" != "$USER" ] && chown "$ORIGINAL_USER:$ORIGINAL_USER" "$user_vimrc" 2>/dev/null || true
+        [ "$ORIGINAL_USER" != "$USER" ] && (chown "$ORIGINAL_USER:$ORIGINAL_GROUP" "$user_vimrc" 2>/dev/null || chown "$ORIGINAL_USER" "$user_vimrc" 2>/dev/null || true)
         log info "已成功更新 $user_vimrc"
     fi
 }

@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # 自动下载并安装 gitlint commit message 校验工具
-# 用法：./go_install.sh 
+# 用法：./gitlint_install.sh 
 
 set -e
 
@@ -14,21 +14,21 @@ function log {
     local logtype
     logtype=$1
     msg=$2
-    datetime=`date +'%F %H:%M:%S'`
+    datetime=$(date +'%F %H:%M:%S')
     logformat="${datetime} ${FUNCNAME[@]/log/} [line:${BASH_LINENO[0]}] ${logtype}:${msg}"
     {
     case $logtype in
         debug)
-            echo "${logformat}" &>> $logfile;;
+            echo "${logformat}" >> "$logfile" 2>&1;;
         info)
             echo -e "\033[32m $datetime [info] ${msg} \t \033[0m"
-            echo "${logformat}" &>> $logfile;;
+            echo "${logformat}" >> "$logfile" 2>&1;;
         warn)
             echo -e "\033[33m $datetime [WARN] ${msg} \t \033[0m"
-            echo "${logformat}" &>> $logfile;;
+            echo "${logformat}" >> "$logfile" 2>&1;;
         error)
             echo -e "\033[31m $datetime [ERROR] ${msg} \033[0m"
-            echo "${logformat}" &>> $logfile
+            echo "${logformat}" >> "$logfile" 2>&1
             exit 1;;
     esac
     }
@@ -38,12 +38,13 @@ function log {
 function check_go_environment {
     log "info" "检查Go环境..."
 
-    if ! command -v go &> /dev/null; then
+    if ! command -v go >/dev/null 2>&1; then
         log "error" "Go未安装，请先安装Go语言环境"
     fi
 
-    local go_version=$(go version 2>&1)
-    if [[ $? -eq 0 ]]; then
+    local go_version
+    go_version=$(go version 2>&1)
+    if [ $? -eq 0 ]; then
         log "info" "检测到Go环境: $go_version"
     else
         log "error" "Go版本检查失败，请确保Go正确安装"
@@ -55,8 +56,8 @@ function install_go_gitlint() {
     log "info" "开始安装go-gitlint..."
 
     # 检查go-gitlint目录是否已存在
-    if [[ -d /tmp/go-gitlint ]]; then
-        log "info" "go-gitlint目录已��在，跳过git clone步骤"
+    if [ -d /tmp/go-gitlint ]; then
+        log "info" "go-gitlint目录已存在，跳过git clone步骤"
         cd /tmp/go-gitlint
     else
         log "info" "克隆go-gitlint仓库..."
@@ -82,7 +83,6 @@ function install_go_gitlint() {
 
         if ! make build; then
             log "error" "使用代理构建仍然失败"
-            # cd .. && rm -rf go-gitlint
             return 1
         fi
 
@@ -90,13 +90,15 @@ function install_go_gitlint() {
     fi
 
     # 检查构建结果
-    if [[ -f gitlint ]]; then
+    if [ -f gitlint ]; then
         # 检查是否有权限写入/usr/local/bin
-        if [[ -w /usr/local/bin ]] || command -v sudo &> /dev/null; then
-            if command -v sudo &> /dev/null; then
+        if [ -w /usr/local/bin ] || command -v sudo >/dev/null 2>&1; then
+            if command -v sudo >/dev/null 2>&1; then
+                sudo mkdir -p /usr/local/bin
                 sudo mv gitlint /usr/local/bin/gitlint
                 log "info" "gitlint二进制文件已通过sudo移动到/usr/local/bin/"
             else
+                mkdir -p /usr/local/bin
                 mv gitlint /usr/local/bin/gitlint
                 log "info" "gitlint二进制文件已移动到/usr/local/bin/"
             fi
@@ -111,19 +113,18 @@ function install_go_gitlint() {
             if [[ ":$PATH:" != *":$install_dir:"* ]]; then
                 log "warn" "请将 $install_dir 添加到您的PATH环境变量中"
                 log "info" "可以在 ~/.bashrc 或 ~/.zshrc 中添加: export PATH=\"\$PATH:$install_dir\""
-                log "info" "然后运行: source ~/.bashrc (或 source ~/.zshrc)"
+                log "info" "然后运行: source ~/.zshrc (或 source ~/.bashrc)"
             fi
         fi
     else
         log "error" "构建失败，未找到gitlint二进制文件"
-        # cd .. && rm -rf go-gitlint
         return 1
     fi
 
     cd .. && rm -rf go-gitlint
 
     # 验证安装
-    if command -v gitlint &> /dev/null; then
+    if command -v gitlint >/dev/null 2>&1; then
         log "info" "go-gitlint安装成功"
         gitlint --help
     else

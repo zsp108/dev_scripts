@@ -24,19 +24,19 @@ function log {
     {
         case $logtype in
             debug)
-                echo "${logformat}" &>> "$logfile"
+                echo "${logformat}" >> "$logfile" 2>&1
                 ;;
             info)
                 echo -e "\033[32m $datetime [info] ${msg} \t \033[0m"
-                echo "${logformat}" &>> "$logfile"
+                echo "${logformat}" >> "$logfile" 2>&1
                 ;;
             warn)
                 echo -e "\033[33m $datetime [WARN] ${msg} \t \033[0m"
-                echo "${logformat}" &>> "$logfile"
+                echo "${logformat}" >> "$logfile" 2>&1
                 ;;
             error)
                 echo -e "\033[31m $datetime [ERROR] ${msg} \033[0m"
-                echo "${logformat}" &>> "$logfile"
+                echo "${logformat}" >> "$logfile" 2>&1
                 exit 1
                 ;;
         esac
@@ -108,7 +108,7 @@ ensure_curl() {
 install_node_macos() {
     log info "macOS 检测，使用 Homebrew 安装 node"
 
-    sudo xcode-select --install || true
+    sudo xcode-select --install 2>/dev/null || true
 
     if ! command -v brew >/dev/null 2>&1; then
         log info "brew 未安装，开始安装 Homebrew..."
@@ -191,7 +191,7 @@ install_gemini_cli() {
 # -----------------------------
 # 主流程
 # -----------------------------
-log info "开始安装 Node.js LTS + @openai/codex"
+log info "开始安装 Node.js LTS"
 
 case "$OS" in
     macos)
@@ -208,7 +208,4 @@ case "$OS" in
         ;;
 esac
 
-#install_codex_cli
-
 log info "全部安装完成！ 🎉"
-

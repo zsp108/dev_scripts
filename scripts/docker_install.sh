@@ -38,27 +38,28 @@ if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ "$1" = "help" ]; then
     show_help
     exit 0
 fi
+
 # 日志函数，记录操作系统，并且将输出打印到屏幕
 function log {
     local msg
     local logtype
     logtype=$1
     msg=$2
-    datetime=`date +'%F %H:%M:%S'`
+    datetime=$(date +'%F %H:%M:%S')
     logformat="${datetime} ${FUNCNAME[@]/log/} [line:${BASH_LINENO[0]}] ${logtype}:${msg}"
     {
     case $logtype in
         debug)
-            echo "${logformat}" &>> $logfile;;
+            echo "${logformat}" >> "$logfile" 2>&1;;
         info)
             echo -e "\033[32m $datetime [info] ${msg} \t \033[0m"
-            echo "${logformat}" &>> $logfile;;
+            echo "${logformat}" >> "$logfile" 2>&1;;
         warn)
             echo -e "\033[33m $datetime [WARN] ${msg} \t \033[0m"
-            echo "${logformat}" &>> $logfile;;
+            echo "${logformat}" >> "$logfile" 2>&1;;
         error)
             echo -e "\033[31m $datetime [ERROR] ${msg} \033[0m"
-            echo "${logformat}" &>> $logfile
+            echo "${logformat}" >> "$logfile" 2>&1
             exit 1;;
     esac
     }
@@ -109,12 +110,14 @@ log info "Docker安装路径(data-root): $DOCKER_INSTALL_PATH"
 # 获取原始用户信息（当使用sudo执行时）
 if [ -n "$SUDO_USER" ]; then
     ORIGINAL_USER="$SUDO_USER"
-    ORIGINAL_HOME=$(eval echo ~$SUDO_USER)
-    log info "检测到sudo执行，原始用户: $ORIGINAL_USER, 原始家目录: $ORIGINAL_HOME"
+    ORIGINAL_HOME=$(eval echo "~$SUDO_USER")
+    ORIGINAL_GROUP=$(id -gn "$SUDO_USER" 2>/dev/null || echo "$SUDO_USER")
+    log info "检测到sudo执行，原始用户: $ORIGINAL_USER, 原始家目录: $ORIGINAL_HOME, 用户组: $ORIGINAL_GROUP"
 else
     ORIGINAL_USER="$USER"
     ORIGINAL_HOME="$HOME"
-    log info "直接执行，当前用户: $ORIGINAL_USER, 当前家目录: $ORIGINAL_HOME"
+    ORIGINAL_GROUP=$(id -gn "$USER" 2>/dev/null || echo "$USER")
+    log info "直接执行，当前用户: $ORIGINAL_USER, 当前家目录: $ORIGINAL_HOME, 用户组: $ORIGINAL_GROUP"
 fi
 
 # 系统架构检测和标准化
@@ -127,14 +130,21 @@ case "$ARCH" in
     *) log error "不支持的架构: $ARCH" ;;
 esac
 
-# 获取系统版本信息（支持 CentOS/RedHat 或 Ubuntu/Debian）
-if [ -f /etc/os-release ]; then
+# 获取系统版本信息
+UNAME_S=$(uname -s)
+if [ "$UNAME_S" = "Darwin" ]; then
+    OS="darwin"
+    VERSION=$(sw_vers -productVersion 2>/dev/null || uname -r)
+    OS_NAME="macOS $VERSION"
+elif [ -f /etc/os-release ]; then
     . /etc/os-release
     OS=$ID
     VERSION=$VERSION_ID
     OS_NAME=$PRETTY_NAME
 else
-    log error "无法确定操作系统类型。"
+    OS="unknown"
+    VERSION=$(uname -r)
+    OS_NAME="$OS $VERSION"
 fi
 
 # 打印系统信息
@@ -142,8 +152,8 @@ log info "检测到系统架构: $ARCH (Docker架构: $DOCKER_ARCH)"
 log info "检测到操作系统: $OS_NAME ($OS $VERSION)"
 
 # 检查Docker是否已安装
-if command -v docker &> /dev/null; then
-    DOCKER_CURRENT_VERSION=$(docker --version | cut -d' ' -f3 | sed 's/,//')
+if command -v docker >/dev/null 2>&1; then
+    DOCKER_CURRENT_VERSION=$(docker --version 2>&1 | cut -d' ' -f3 | sed 's/,//')
     log warn "Docker已安装，当前版本: $DOCKER_CURRENT_VERSION"
 
     if [ "$DOCKER_VERSION" != "latest" ] && [ "$DOCKER_CURRENT_VERSION" = "$DOCKER_VERSION" ]; then
@@ -151,15 +161,28 @@ if command -v docker &> /dev/null; then
         exit 0
     fi
 
-    read -p "是否要卸载当前版本并重新安装？(y/N): " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        log info "用户取消安装"
-        exit 0
+    if [ -t 0 ]; then
+        read -p "是否要卸载当前版本并重新安装？(y/N): " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            log info "用户取消安装"
+            exit 0
+        fi
     fi
 fi
 
 # Docker安装函数
+install_docker_darwin() {
+    log info "开始安装Docker (macOS)"
+    if command -v brew >/dev/null 2>&1; then
+        log info "使用 Homebrew 安装 Docker Desktop..."
+        sudo -u "$ORIGINAL_USER" brew install --cask docker || log error "brew install --cask docker 失败"
+        log info "Docker Desktop 安装成功，请在“应用程序”中启动 Docker"
+    else
+        log warn "未检测到 Homebrew，请手动下载 Docker Desktop DMG 安装: https://www.docker.com/products/docker-desktop/"
+    fi
+}
+
 install_docker_debian() {
     log info "开始安装Docker (Debian/Ubuntu系列)"
 
@@ -233,32 +256,11 @@ install_docker_fedora() {
     fi
 }
 
-# 安装Docker Compose（独立安装方式）
-install_docker_compose() {
-    if ! command -v docker-compose &> /dev/null; then
-        log info "安装Docker Compose"
-
-        # 获取最新版本或指定版本
-        if [ "$DOCKER_VERSION" = "latest" ]; then
-            COMPOSE_VERSION=$(curl -s https://api.github.com/repos/docker/compose/releases/latest | grep -oP '"tag_name": "\K[^"]*')
-        else
-            COMPOSE_VERSION="v$DOCKER_VERSION"
-        fi
-
-        # 下载Docker Compose
-        curl -L "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose || log error "无法下载Docker Compose"
-
-        # 设置执行权限
-        chmod +x /usr/local/bin/docker-compose || log error "无法设置Docker Compose执行权限"
-
-        log info "Docker Compose安装完成"
-    else
-        log info "Docker Compose已安装"
-    fi
-}
-
 # 配置Docker数据目录
 configure_docker_path() {
+    if [ "$OS" = "darwin" ]; then
+        return 0
+    fi
     log info "配置Docker安装路径(data-root): $DOCKER_INSTALL_PATH"
 
     mkdir -p /etc/docker || log error "无法创建 /etc/docker 目录"
@@ -273,6 +275,10 @@ EOF
 
 # 根据操作系统选择安装方法
 case "$OS" in
+    darwin)
+        install_docker_darwin
+        exit 0
+        ;;
     ubuntu|debian|linuxmint|pop)
         install_docker_debian
         ;;

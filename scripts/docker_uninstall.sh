@@ -57,16 +57,16 @@ function log {
     {
     case $logtype in
         debug)
-            echo "${logformat}" &>> "$logfile" ;;
+            echo "${logformat}" >> "$logfile" 2>&1 ;;
         info)
             echo -e "\033[32m ${datetime} [info] ${msg} \t \033[0m"
-            echo "${logformat}" &>> "$logfile" ;;
+            echo "${logformat}" >> "$logfile" 2>&1 ;;
         warn)
             echo -e "\033[33m ${datetime} [WARN] ${msg} \t \033[0m"
-            echo "${logformat}" &>> "$logfile" ;;
+            echo "${logformat}" >> "$logfile" 2>&1 ;;
         error)
             echo -e "\033[31m ${datetime} [ERROR] ${msg} \033[0m"
-            echo "${logformat}" &>> "$logfile"
+            echo "${logformat}" >> "$logfile" 2>&1
             exit 1 ;;
     esac
     }
@@ -87,28 +87,48 @@ log info "清理数据目录: $PURGE_DATA"
 log info "跳过确认: $ASSUME_YES"
 
 # 获取系统信息
-if [ -f /etc/os-release ]; then
+UNAME_S=$(uname -s)
+if [ "$UNAME_S" = "Darwin" ]; then
+    OS="darwin"
+    VERSION=$(sw_vers -productVersion 2>/dev/null || uname -r)
+    OS_NAME="macOS $VERSION"
+elif [ -f /etc/os-release ]; then
     . /etc/os-release
     OS=$ID
     OS_NAME=$PRETTY_NAME
 else
-    log error "无法确定操作系统类型。"
+    OS="unknown"
+    OS_NAME="unknown"
 fi
 
 log info "检测到操作系统: $OS_NAME ($OS)"
 
 # 停止并禁用服务
-if systemctl list-unit-files | grep -q '^docker.service'; then
-    log info "停止 Docker 服务"
-    systemctl stop docker || log warn "停止 Docker 服务失败，继续执行"
-    systemctl disable docker || log warn "禁用 Docker 服务失败，继续执行"
+if command -v systemctl >/dev/null 2>&1; then
+    if systemctl list-unit-files 2>/dev/null | grep -q '^docker.service'; then
+        log info "停止 Docker 服务"
+        systemctl stop docker || log warn "停止 Docker 服务失败，继续执行"
+        systemctl disable docker || log warn "禁用 Docker 服务失败，继续执行"
+    fi
+
+    if systemctl list-unit-files 2>/dev/null | grep -q '^containerd.service'; then
+        log info "停止 containerd 服务"
+        systemctl stop containerd || log warn "停止 containerd 服务失败，继续执行"
+        systemctl disable containerd || log warn "禁用 containerd 服务失败，继续执行"
+    fi
 fi
 
-if systemctl list-unit-files | grep -q '^containerd.service'; then
-    log info "停止 containerd 服务"
-    systemctl stop containerd || log warn "停止 containerd 服务失败，继续执行"
-    systemctl disable containerd || log warn "禁用 containerd 服务失败，继续执行"
-fi
+uninstall_darwin() {
+    log info "开始卸载 macOS 上的 Docker..."
+    if command -v brew >/dev/null 2>&1; then
+        brew uninstall --cask docker || true
+    fi
+    rm -rf "/Applications/Docker.app" 2>/dev/null || true
+    rm -rf "$HOME/Library/Containers/com.docker.docker" 2>/dev/null || true
+    rm -rf "$HOME/Library/Application Support/Docker Desktop" 2>/dev/null || true
+    rm -rf "$HOME/.docker" 2>/dev/null || true
+    log info "macOS Docker 卸载完成"
+}
 
 uninstall_debian() {
     log info "开始卸载 Docker (Debian/Ubuntu系列)"
@@ -130,6 +150,10 @@ uninstall_rhel() {
 }
 
 case "$OS" in
+    darwin)
+        uninstall_darwin
+        exit 0
+        ;;
     ubuntu|debian|linuxmint|pop)
         uninstall_debian
         ;;

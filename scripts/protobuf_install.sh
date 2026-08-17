@@ -16,21 +16,21 @@ function log {
     local logtype
     logtype=$1
     msg=$2
-    datetime=`date +'%F %H:%M:%S'`
+    datetime=$(date +'%F %H:%M:%S')
     logformat="${datetime} ${FUNCNAME[@]/log/} [line:${BASH_LINENO[0]}] ${logtype}:${msg}"
     {
     case $logtype in
         debug)
-            echo "${logformat}" &>> $logfile;;
+            echo "${logformat}" >> "$logfile" 2>&1;;
         info)
             echo -e "\033[32m $datetime [info] ${msg} \t \033[0m"
-            echo "${logformat}" &>> $logfile;;
+            echo "${logformat}" >> "$logfile" 2>&1;;
         warn)
             echo -e "\033[33m $datetime [WARN] ${msg} \t \033[0m"
-            echo "${logformat}" &>> $logfile;;
+            echo "${logformat}" >> "$logfile" 2>&1;;
         error)
             echo -e "\033[31m $datetime [ERROR] ${msg} \033[0m"
-            echo "${logformat}" &>> $logfile
+            echo "${logformat}" >> "$logfile" 2>&1
             exit 1;;
     esac
     }
@@ -73,12 +73,14 @@ fi
 # 获取原始用户信息（当使用sudo执行或无sudo执行时）
 if [ -n "$SUDO_USER" ]; then
     ORIGINAL_USER="$SUDO_USER"
-    ORIGINAL_HOME=$(eval echo ~$SUDO_USER)
-    log info "检测到sudo执行，原始用户: $ORIGINAL_USER, 原始家目录: $ORIGINAL_HOME"
+    ORIGINAL_HOME=$(eval echo "~$SUDO_USER")
+    ORIGINAL_GROUP=$(id -gn "$SUDO_USER" 2>/dev/null || echo "$SUDO_USER")
+    log info "检测到sudo执行，原始用户: $ORIGINAL_USER, 原始家目录: $ORIGINAL_HOME, 用户组: $ORIGINAL_GROUP"
 else
     ORIGINAL_USER="$USER"
     ORIGINAL_HOME="$HOME"
-    log info "直接执行，当前用户: $ORIGINAL_USER, 当前家目录: $ORIGINAL_HOME"
+    ORIGINAL_GROUP=$(id -gn "$USER" 2>/dev/null || echo "$USER")
+    log info "直接执行，当前用户: $ORIGINAL_USER, 当前家目录: $ORIGINAL_HOME, 用户组: $ORIGINAL_GROUP"
 fi
 
 # 判断是否已安装 protoc，若已安装则确认是否重新安装
@@ -107,15 +109,19 @@ if command -v protoc >/dev/null 2>&1; then
 fi
 
 # 系统架构与操作系统信息获取
+UNAME_S=$(uname -s)
 ARCH=$(uname -m)
 
-if [ -f /etc/os-release ]; then
+if [ "$UNAME_S" = "Darwin" ]; then
+    OS="darwin"
+    VERSION=$(sw_vers -productVersion 2>/dev/null || uname -r)
+elif [ -f /etc/os-release ]; then
     . /etc/os-release
     OS=$ID
     VERSION=$VERSION_ID
 else
-    log error "无法确定操作系统类型。"
-    exit 1
+    OS="unknown"
+    VERSION=$(uname -r)
 fi
 
 log info "检测到系统架构: $ARCH"
@@ -142,17 +148,25 @@ install_dependencies() {
             $SUDO apt update -y
             $SUDO apt install -y build-essential autoconf automake libtool curl make g++ unzip git golang-go
             ;;
+        'darwin')
+            if command -v brew >/dev/null 2>&1; then
+                brew install autoconf automake libtool make gcc unzip git go || true
+            else
+                log warn "macOS 检测到未安装 Homebrew，若编译缺少依赖请先安装 Homebrew"
+            fi
+            ;;
         *)
-            log error "不支持的操作系统: $OS，请手动安装依赖包"
-            exit 1
+            log warn "未知系统类型: $OS，尝试继续..."
             ;;
     esac
 
-    log info "依赖包安装完成"
+    log info "依赖包准备完成"
 }
 
 # 执行依赖安装
 install_dependencies
+
+NPROC=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 2)
 
 # 第一步：编译安装 Protobuf
 if [ "$skip_protobuf_build" != "true" ]; then
@@ -181,11 +195,11 @@ if [ "$skip_protobuf_build" != "true" ]; then
     log info "配置编译选项 (configure)..."
     ./configure --prefix=/usr/local CFLAGS="-O2" CXXFLAGS="-O2" || log error "configure 配置失败"
 
-    log info "正在编译 Protobuf (使用 $(nproc) 个 CPU 核心)..."
-    make -j$(nproc) || log error "编译失败"
+    log info "正在编译 Protobuf (使用 $NPROC 个 CPU 核心)..."
+    make -j"$NPROC" || log error "编译失败"
 
     log info "正在安装 Protobuf..."
-    $SUDO make install -j$(nproc) || log error "安装失败"
+    $SUDO make install -j"$NPROC" || log error "安装失败"
 
     # 刷新动态链接库缓存（防止 libprotobuf.so 找不到报错）
     if command -v ldconfig >/dev/null 2>&1; then
@@ -220,11 +234,12 @@ install_protoc_gen_go() {
     go install "github.com/golang/protobuf/protoc-gen-go@$protoc_gen_go_version"
 
     local user_gopath
-    user_gopath=$(go env GOPATH 2>/dev/null || echo "$HOME/go")
+    user_gopath=$(go env GOPATH 2>/dev/null || echo "$ORIGINAL_HOME/go")
     local gen_go_bin="$user_gopath/bin/protoc-gen-go"
 
     # 将 protoc-gen-go 复制到系统标准目录 /usr/local/bin
     if [ -f "$gen_go_bin" ]; then
+        $SUDO mkdir -p /usr/local/bin
         $SUDO cp -f "$gen_go_bin" /usr/local/bin/protoc-gen-go
         $SUDO chmod +x /usr/local/bin/protoc-gen-go
         log info "已成功安装 protoc-gen-go 并发布至 /usr/local/bin/protoc-gen-go"
@@ -238,20 +253,33 @@ install_protoc_gen_go
 # 配置环境变量函数
 configure_env() {
     local user_home="$1"
-    local user_bashrc="$user_home/.bashrc"
+    local targets=()
 
-    if grep -q "# Set PATH to include Protobuf and Go bin" "$user_bashrc" 2>/dev/null; then
-        log warn "$user_bashrc 已包含 Protobuf 环境变量配置"
-        return 0
-    else
-        cat << 'EOF' >> "$user_bashrc"
+    [ -f "$user_home/.bashrc" ] && targets+=("$user_home/.bashrc")
+    [ -f "$user_home/.zshrc" ] && targets+=("$user_home/.zshrc")
+    [ -f "$user_home/.bash_profile" ] && targets+=("$user_home/.bash_profile")
+    [ -f "$user_home/.zprofile" ] && targets+=("$user_home/.zprofile")
+
+    if [ ${#targets[@]} -eq 0 ]; then
+        if [ "$UNAME_S" = "Darwin" ]; then
+            targets=("$user_home/.zshrc")
+        else
+            targets=("$user_home/.bashrc")
+        fi
+    fi
+
+    for target_file in "${targets[@]}"; do
+        if grep -q "# Set PATH to include Protobuf and Go bin" "$target_file" 2>/dev/null; then
+            log warn "$target_file 已包含 Protobuf 环境变量配置"
+        else
+            cat << 'EOF' >> "$target_file"
 
 # Set PATH to include Protobuf and Go bin
 export PATH=$PATH:/usr/local/bin:$(go env GOPATH 2>/dev/null || echo $HOME/go)/bin
 EOF
-        log info "已添加 Protobuf/Go 环境变量配置到 $user_bashrc"
-        return 0
-    fi
+            log info "已添加 Protobuf/Go 环境变量配置到 $target_file"
+        fi
+    done
 }
 
 # 配置环境变量

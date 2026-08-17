@@ -13,11 +13,11 @@ PREFIX=$1
 METHOD=${2:-ping} # 如果没传第二个参数，默认使用 ping
 
 # 工具依赖检查
-if [ "$METHOD" = "arp" ] && ! command -v arping &> /dev/null; then
+if [ "$METHOD" = "arp" ] && ! command -v arping >/dev/null 2>&1; then
     echo -e "\033[0;31m错误: 未找到 arping 命令。请先安装 (如: yum install iputils / apt install arping)\033[0m"
     exit 1
 fi
-if [ "$METHOD" = "tcp" ] && ! command -v nc &> /dev/null; then
+if [ "$METHOD" = "tcp" ] && ! command -v nc >/dev/null 2>&1; then
     echo -e "\033[0;31m错误: 未找到 nc 命令。请先安装 (如: yum install nc / apt install netcat)\033[0m"
     exit 1
 fi
@@ -42,6 +42,12 @@ echo -e "================================================="
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
 
+if [ "$(uname -s)" = "Darwin" ]; then
+    PING_TIMEOUT_FLAG="-W 1000"
+else
+    PING_TIMEOUT_FLAG="-W 1"
+fi
+
 for i in {1..254}; do
     (
         target="$PREFIX.$i"
@@ -50,16 +56,16 @@ for i in {1..254}; do
         case "$METHOD" in
             arp)
                 # ARP 探测 (超时 1 秒)
-                if arping -c 1 -w 1 "$target" &> /dev/null; then alive=1; fi
+                if arping -c 1 -w 1 "$target" >/dev/null 2>&1; then alive=1; fi
                 ;;
             tcp)
                 # TCP 探测常见端口: 22(SSH), 80/443(Web), 3306(MySQL), 6379(Redis), 8080/8081(业务)
                 # 只要有一个端口通，就说明机器存活
-                if nc -z -w 1 "$target" 22 80 443 3306 6379 8080 8081 &> /dev/null; then alive=1; fi
+                if nc -z -w 1 "$target" 22 80 443 3306 6379 8080 8081 >/dev/null 2>&1; then alive=1; fi
                 ;;
             ping|*)
                 # 普通 Ping 探测 (超时 1 秒)
-                if ping -c 1 -W 1 "$target" &> /dev/null; then alive=1; fi
+                if ping -c 1 $PING_TIMEOUT_FLAG "$target" >/dev/null 2>&1; then alive=1; fi
                 ;;
         esac
         
@@ -71,7 +77,8 @@ done
 wait # 等待所有后台探测任务完成
 
 # --- 4. 收集结果 ---
-declare -A is_avail
+# 使用标准索引数组兼容 Bash 3.2+
+declare -a is_avail
 for i in {1..254}; do
     if [ -f "$TMP_DIR/$i" ]; then alive=$(cat "$TMP_DIR/$i"); else alive=0; fi
     # 找空闲IP逻辑: alive=0 才是可用(1)

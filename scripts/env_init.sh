@@ -35,19 +35,19 @@ function log {
     {
     case "$logtype" in
         debug)
-            echo "${logformat}" &>> "$logfile"
+            echo "${logformat}" >> "$logfile" 2>&1
             ;;
         info)
             echo -e "\033[32m $datetime [info] ${msg} \t \033[0m"
-            echo "${logformat}" &>> "$logfile"
+            echo "${logformat}" >> "$logfile" 2>&1
             ;;
         warn)
             echo -e "\033[33m $datetime [WARN] ${msg} \t \033[0m"
-            echo "${logformat}" &>> "$logfile"
+            echo "${logformat}" >> "$logfile" 2>&1
             ;;
         error)
             echo -e "\033[31m $datetime [ERROR] ${msg} \033[0m"
-            echo "${logformat}" &>> "$logfile"
+            echo "${logformat}" >> "$logfile" 2>&1
             exit 1
             ;;
     esac
@@ -101,8 +101,8 @@ MODE:
   - 环境配置包括:
       * 设置 LANG / LC_ALL 为 en_US.UTF-8
       * 创建 ~/workspace 目录
-      * 在 ~/.bashrc 中添加 WORKSPACE 环境变量与 ws 别名
-  - 代理配置会在 ~/.bashrc 中添加:
+      * 在 shell rc 文件中添加 WORKSPACE 环境变量与 ws 别名
+  - 代理配置会在 shell rc 文件中添加:
       * setproxy      开启代理
       * unsetproxy    关闭代理
       * showproxy     展示当前代理配置
@@ -187,27 +187,43 @@ fi
 if [ -n "$SUDO_USER" ]; then
     ORIGINAL_USER="$SUDO_USER"
     ORIGINAL_HOME=$(eval echo "~$SUDO_USER")
-    log info "检测到 sudo 执行，原始用户: $ORIGINAL_USER, 原始家目录: $ORIGINAL_HOME"
+    ORIGINAL_GROUP=$(id -gn "$SUDO_USER" 2>/dev/null || echo "$SUDO_USER")
+    log info "检测到 sudo 执行，原始用户: $ORIGINAL_USER, 原始家目录: $ORIGINAL_HOME, 用户组: $ORIGINAL_GROUP"
 else
     ORIGINAL_USER="$USER"
     ORIGINAL_HOME="$HOME"
-    log info "直接执行，当前用户: $ORIGINAL_USER, 当前家目录: $ORIGINAL_HOME"
+    ORIGINAL_GROUP=$(id -gn "$USER" 2>/dev/null || echo "$USER")
+    log info "直接执行，当前用户: $ORIGINAL_USER, 当前家目录: $ORIGINAL_HOME, 用户组: $ORIGINAL_GROUP"
 fi
+
+get_target_rc_files() {
+    local user_home="$1"
+    local targets=()
+
+    [ -f "$user_home/.bashrc" ] && targets+=("$user_home/.bashrc")
+    [ -f "$user_home/.zshrc" ] && targets+=("$user_home/.zshrc")
+
+    if [ ${#targets[@]} -eq 0 ]; then
+        if [ "$(uname -s)" = "Darwin" ]; then
+            targets=("$user_home/.zshrc")
+        else
+            targets=("$user_home/.bashrc")
+        fi
+    fi
+
+    echo "${targets[@]}"
+}
 
 ### 函数：代理配置（独立模块） #######################################
 configure_proxy() {
     local user_home="$1"
     local proxy_scheme="$2"   # socks5/http/https
     local proxy_ip_port="$3"  # IP:PORT
-    local user_bashrc="$user_home/.bashrc"
+    local targets
+    read -r -a targets <<< "$(get_target_rc_files "$user_home")"
 
-    # 如果已有 "=== 通用代理开关 ===" 标记，则只更新其中的地址
-    if grep -q "=== 通用代理开关 ===" "$user_bashrc" 2>/dev/null; then
-        log info "$user_bashrc 已存在代理配置，执行更新..."
-
-        # 用统一模板重写代理配置块，确保 showproxy/proxy_status 都存在
-        local proxy_block
-        proxy_block=$(cat <<EOF
+    local proxy_block
+    proxy_block=$(cat <<EOF
 # === 通用代理开关 ===
 function setproxy() {
     export http_proxy="${proxy_scheme}://${proxy_ip_port}"
@@ -242,7 +258,13 @@ function proxy_status() {
 EOF
 )
 
-        python3 - "$user_bashrc" <<PY
+    for target_rc in "${targets[@]}"; do
+        touch "$target_rc" 2>/dev/null || true
+        # 如果已有 "=== 通用代理开关 ===" 标记，则只更新其中的地址
+        if grep -q "=== 通用代理开关 ===" "$target_rc" 2>/dev/null; then
+            log info "$target_rc 已存在代理配置，执行更新..."
+
+            python3 - "$target_rc" <<PY
 import sys
 from pathlib import Path
 
@@ -266,83 +288,53 @@ end += 3  # include trailing newline after closing brace
 
 path.write_text(text[:start] + block + text[end:])
 PY
+            log info "已更新 $target_rc 代理配置为: ${proxy_scheme}://${proxy_ip_port}"
+        else
+            cat << EOF >> "$target_rc"
 
-        log info "已更新代理配置为: ${proxy_scheme}://${proxy_ip_port}"
-        return 0
-    fi
-
-    # 否则为第一次配置，追加一整段
-    cat << EOF >> "$user_bashrc"
-
-# === 通用代理开关 ===
-function setproxy() {
-    export http_proxy="${proxy_scheme}://${proxy_ip_port}"
-    export https_proxy="${proxy_scheme}://${proxy_ip_port}"
-    export ftp_proxy="${proxy_scheme}://${proxy_ip_port}"
-    export all_proxy="${proxy_scheme}://${proxy_ip_port}"
-    export no_proxy="172.16.x.x"
-    echo "✅ 已开启终端代理: ${proxy_scheme}://${proxy_ip_port}"
-}
-
-function unsetproxy() {
-    unset http_proxy https_proxy ftp_proxy all_proxy no_proxy
-    echo "✅ 已关闭终端代理"
-}
-
-function showproxy() {
-    if [ -n "\$http_proxy" ]; then
-        echo "🔄 当前代理配置:"
-        echo "  http_proxy=\$http_proxy"
-        echo "  https_proxy=\$https_proxy"
-        echo "  ftp_proxy=\$ftp_proxy"
-        echo "  all_proxy=\$all_proxy"
-        echo "  no_proxy=\$no_proxy"
-    else
-        echo "⚡ 代理已关闭"
-    fi
-}
-
-function proxy_status() {
-    showproxy
-}
+$proxy_block
 EOF
-
-    log info "已添加代理配置到 $user_bashrc (${proxy_scheme}://${proxy_ip_port})"
+            log info "已添加代理配置到 $target_rc (${proxy_scheme}://${proxy_ip_port})"
+        fi
+    done
     return 0
 }
 
 ### 函数：字符集配置（独立模块） ######################################
 configure_locale() {
     local user_home="$1"
-    local user_bashrc="$user_home/.bashrc"
+    local targets
+    read -r -a targets <<< "$(get_target_rc_files "$user_home")"
 
-    if grep -q "# 中文支持配置" "$user_bashrc" 2>/dev/null; then
-        log info "$user_bashrc 已包含中文支持配置，跳过..."
-        return 0
-    fi
-
-    cat << 'EOF' >> "$user_bashrc"
+    for target_rc in "${targets[@]}"; do
+        touch "$target_rc" 2>/dev/null || true
+        if grep -q "# 中文支持配置" "$target_rc" 2>/dev/null; then
+            log info "$target_rc 已包含中文支持配置，跳过..."
+        else
+            cat << 'EOF' >> "$target_rc"
 
 # 中文支持配置
 export LANG=en_US.UTF-8
 export LC_ALL=en_US.UTF-8
 EOF
-
-    log info "已添加中文支持配置到 $user_bashrc"
+            log info "已添加中文支持配置到 $target_rc"
+        fi
+    done
     return 0
 }
 
 ### 函数：工作目录配置（独立模块） ####################################
 configure_workspace() {
     local user_home="$1"
-    local user_bashrc="$user_home/.bashrc"
+    local targets
+    read -r -a targets <<< "$(get_target_rc_files "$user_home")"
 
-    if grep -q "# 工作目录配置" "$user_bashrc" 2>/dev/null; then
-        log info "$user_bashrc 已包含工作目录配置，跳过..."
-        return 0
-    fi
-
-    cat << EOF >> "$user_bashrc"
+    for target_rc in "${targets[@]}"; do
+        touch "$target_rc" 2>/dev/null || true
+        if grep -q "# 工作目录配置" "$target_rc" 2>/dev/null; then
+            log info "$target_rc 已包含工作目录配置，跳过..."
+        else
+            cat << EOF >> "$target_rc"
 
 # 工作目录配置
 export WORKSPACE="$user_home/workspace" # 设置工作目录
@@ -354,8 +346,9 @@ fi
 
 alias ws="cd \$WORKSPACE"
 EOF
-
-    log info "已添加工作目录配置到 $user_bashrc"
+            log info "已添加工作目录配置到 $target_rc"
+        fi
+    done
     return 0
 }
 
@@ -375,7 +368,7 @@ if [ "$MODE" = "all" ] || [ "$MODE" = "env" ]; then
 
     # sudo 场景下给原始用户 ownership
     if [ "$ORIGINAL_USER" != "$USER" ] && [ "$ORIGINAL_HOME" != "$HOME" ]; then
-        chown -R "$ORIGINAL_USER:$ORIGINAL_USER" "$ORIGINAL_HOME/workspace"
+        chown -R "$ORIGINAL_USER:$ORIGINAL_GROUP" "$ORIGINAL_HOME/workspace" 2>/dev/null || chown -R "$ORIGINAL_USER" "$ORIGINAL_HOME/workspace"
         log info "已设置工作目录权限给 $ORIGINAL_USER"
 
         log info "为原始用户 $ORIGINAL_USER 配置字符集..."
@@ -422,7 +415,11 @@ if [ "$MODE" = "all" ] || [ "$MODE" = "proxy" ]; then
 fi
 
 log info ""
-log info "请执行 'source ~/.bashrc' 或重新登录以加载环境变量"
+if [ "$(uname -s)" = "Darwin" ]; then
+    log info "请执行 'source ~/.zshrc' (或 ~/.bashrc) 加载环境变量"
+else
+    log info "请执行 'source ~/.bashrc' 或重新登录以加载环境变量"
+fi
 if [ "$ORIGINAL_USER" != "$USER" ] && [ "$ORIGINAL_HOME" != "$HOME" ]; then
     log info "原始用户 $ORIGINAL_USER 的环境变量已配置，请重新登录以生效"
 fi
