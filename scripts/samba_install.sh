@@ -291,6 +291,12 @@ function init_smb_global_conf {
     use sendfile = yes
     aio read size = 16384
     aio write size = 16384
+    ea support = yes
+    smb2 leases = yes
+
+    # 连接断开与锁即时释放优化 (彻底解决 macOS 推出卡顿/文件句柄残留)
+    deadtime = 10
+    reset on zero vc = yes
 
     # macOS 原生兼容模块 (支持 Finder 磁盘侧边栏、推出图标、元数据读写)
     vfs objects = catia fruit streams_xattr
@@ -301,6 +307,7 @@ function init_smb_global_conf {
     fruit:wipe_intentionally_left_blank_rfork = yes
     fruit:delete_empty_adfiles = yes
     fruit:time machine = no
+    fruit:locking = none
 
     # 日志与打印机配置
     log file = /var/log/samba/log.%m
@@ -365,6 +372,7 @@ function add_user_to_samba {
     force create mode = 0666
     force directory mode = 0777
     vfs objects = catia fruit streams_xattr
+    fruit:locking = none
 
 EOF
     else
