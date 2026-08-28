@@ -306,10 +306,13 @@ function configure_smb_conf {
     map to guest = Bad User
     dns proxy = no
 
-    # 性能优化 & 协议支持
+    # 性能优化 & 协议支持 (针对 macOS 深度优化)
     min protocol = SMB2
     client min protocol = SMB2
     vfs objects = catia fruit streams_xattr
+    fruit:aapl = yes
+    fruit:nfs_aces = no
+    fruit:copyfile = yes
     fruit:metadata = stream
     fruit:model = Macmini
     fruit:posix_rename = yes
@@ -339,7 +342,7 @@ EOF
 [homes]
     comment = %S 的专属个人私有空间
     path = ${user_base_dir}/%S
-    browseable = no
+    browseable = yes
     writable = yes
     read only = no
     valid users = %S
