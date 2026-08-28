@@ -29,14 +29,19 @@
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 if [ -d "$SCRIPT_DIR/../scripts" ]; then
     PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd -P)"
 else
     PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 fi
 LOG_DIR="$PROJECT_ROOT/logs"
-mkdir -p "$LOG_DIR" 2>/dev/null || LOG_DIR="/tmp"
+
+if [ -d "$LOG_DIR" ]; then
+    [ ! -w "$LOG_DIR" ] && { sudo chmod 777 "$LOG_DIR" 2>/dev/null || LOG_DIR="/tmp"; }
+else
+    mkdir -p "$LOG_DIR" 2>/dev/null && chmod 777 "$LOG_DIR" 2>/dev/null || LOG_DIR="/tmp"
+fi
 logfile="${LOG_DIR}/$(basename "${BASH_SOURCE[0]}" .sh).log"
 
 INSTALL_BIN="/usr/local/bin/filebrowser"
@@ -93,19 +98,19 @@ function log {
     
     case "$logtype" in
         debug)
-            echo "${logformat}" >> "$logfile" 2>&1 || true
+            echo "${logformat}" >> "$logfile" 2>/dev/null || echo "${logformat}" >> "/tmp/$(basename "${BASH_SOURCE[0]}" .sh).log" 2>/dev/null || true || true
             ;;
         info)
             echo -e "\033[32m${datetime} [INFO]  ${msg}\033[0m"
-            echo "${logformat}" >> "$logfile" 2>&1 || true
+            echo "${logformat}" >> "$logfile" 2>/dev/null || echo "${logformat}" >> "/tmp/$(basename "${BASH_SOURCE[0]}" .sh).log" 2>/dev/null || true || true
             ;;
         warn)
             echo -e "\033[33m${datetime} [WARN]  ${msg}\033[0m"
-            echo "${logformat}" >> "$logfile" 2>&1 || true
+            echo "${logformat}" >> "$logfile" 2>/dev/null || echo "${logformat}" >> "/tmp/$(basename "${BASH_SOURCE[0]}" .sh).log" 2>/dev/null || true || true
             ;;
         error)
             echo -e "\033[31m${datetime} [ERROR] ${msg}\033[0m"
-            echo "${logformat}" >> "$logfile" 2>&1 || true
+            echo "${logformat}" >> "$logfile" 2>/dev/null || echo "${logformat}" >> "/tmp/$(basename "${BASH_SOURCE[0]}" .sh).log" 2>/dev/null || true || true
             exit 1
             ;;
     esac

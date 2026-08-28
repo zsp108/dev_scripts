@@ -5,16 +5,19 @@
 #   ./vim_go_install.sh [分支或Tag]   # 安装 vim-go (默认: master)
 #   ./vim_go_install.sh uninstall    # 卸载 vim-go 并清理配置
 
-set -e
-
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 if [ -d "$SCRIPT_DIR/../scripts" ]; then
     PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd -P)"
 else
     PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 fi
 LOG_DIR="$PROJECT_ROOT/logs"
-mkdir -p "$LOG_DIR" 2>/dev/null || LOG_DIR="/tmp"
+
+if [ -d "$LOG_DIR" ]; then
+    [ ! -w "$LOG_DIR" ] && { sudo chmod 777 "$LOG_DIR" 2>/dev/null || LOG_DIR="/tmp"; }
+else
+    mkdir -p "$LOG_DIR" 2>/dev/null && chmod 777 "$LOG_DIR" 2>/dev/null || LOG_DIR="/tmp"
+fi
 logfile="${LOG_DIR}/$(basename "${BASH_SOURCE[0]}" .sh).log"
 
 # 日志函数，记录操作系统，并且将输出打印到屏幕
@@ -28,16 +31,16 @@ function log {
     {
     case $logtype in
         debug)
-            echo "${logformat}" >> "$logfile" 2>&1;;
+            echo "${logformat}" >> "$logfile" 2>/dev/null || echo "${logformat}" >> "/tmp/$(basename "${BASH_SOURCE[0]}" .sh).log" 2>/dev/null || true;;
         info)
             echo -e "[32m $datetime [info] ${msg} 	 [0m"
-            echo "${logformat}" >> "$logfile" 2>&1;;
+            echo "${logformat}" >> "$logfile" 2>/dev/null || echo "${logformat}" >> "/tmp/$(basename "${BASH_SOURCE[0]}" .sh).log" 2>/dev/null || true;;
         warn)
             echo -e "[33m $datetime [WARN] ${msg} 	 [0m"
-            echo "${logformat}" >> "$logfile" 2>&1;;
+            echo "${logformat}" >> "$logfile" 2>/dev/null || echo "${logformat}" >> "/tmp/$(basename "${BASH_SOURCE[0]}" .sh).log" 2>/dev/null || true;;
         error)
             echo -e "[31m $datetime [ERROR] ${msg} [0m"
-            echo "${logformat}" >> "$logfile" 2>&1
+            echo "${logformat}" >> "$logfile" 2>/dev/null || echo "${logformat}" >> "/tmp/$(basename "${BASH_SOURCE[0]}" .sh).log" 2>/dev/null || true
             exit 1;;
     esac
     }
@@ -179,7 +182,7 @@ install_vim_go_plugin() {
 
     # 创建 Vim 8+ 原生插件目录
     if [ "$ORIGINAL_USER" != "$USER" ]; then
-        sudo -u "$ORIGINAL_USER" mkdir -p "$plugin_start_dir"
+        sudo -u "$ORIGINAL_USER" mkdir -p "$plugin_start_dir" 2>/dev/null || mkdir -p "$plugin_start_dir"
     else
         mkdir -p "$plugin_start_dir"
     fi
@@ -208,15 +211,16 @@ install_vim_go_plugin() {
 
     log info "正在克隆 vim-go 仓库 (分支/Tag: $vim_go_branch)..."
 
+    clone_cmd="git clone -b $vim_go_branch --depth=1 $GITHUB_REPO $vim_go_target_dir"
     if [ "$ORIGINAL_USER" != "$USER" ]; then
-        sudo -u "$ORIGINAL_USER" git clone -b "$vim_go_branch" --depth=1 "$GITHUB_REPO" "$vim_go_target_dir" || {
-            log warn "从 GitHub 克隆失败，尝试备用镜像源..."
-            sudo -u "$ORIGINAL_USER" git clone -b "$vim_go_branch" --depth=1 "$MIRROR_REPO" "$vim_go_target_dir" || log error "克隆 vim-go 仓库失败，请检查网络"
+        sudo -u "$ORIGINAL_USER" $clone_cmd 2>/dev/null || $clone_cmd || {
+            log warn "从 GitHub 官方克隆失败，尝试备用镜像源..."
+            sudo -u "$ORIGINAL_USER" git clone -b "$vim_go_branch" --depth=1 "$MIRROR_REPO" "$vim_go_target_dir" 2>/dev/null ||             git clone -b "$vim_go_branch" --depth=1 "$MIRROR_REPO" "$vim_go_target_dir" ||             log error "克隆 vim-go 仓库失败，请检查网络连接"
         }
     else
-        git clone -b "$vim_go_branch" --depth=1 "$GITHUB_REPO" "$vim_go_target_dir" || {
-            log warn "从 GitHub 克隆失败，尝试备用镜像源..."
-            git clone -b "$vim_go_branch" --depth=1 "$MIRROR_REPO" "$vim_go_target_dir" || log error "克隆 vim-go 仓库失败，请检查网络"
+        $clone_cmd || {
+            log warn "从 GitHub 官方克隆失败，尝试备用镜像源..."
+            git clone -b "$vim_go_branch" --depth=1 "$MIRROR_REPO" "$vim_go_target_dir" ||             log error "克隆 vim-go 仓库失败，请检查网络连接"
         }
     fi
 
@@ -238,18 +242,12 @@ install_go_binaries() {
     log info "通过 Vim 静默模式自动执行 :GoInstallBinaries ..."
 
     # 适配无 TTY / CI Headless 环境
-    if [ "$ORIGINAL_USER" != "$USER" ]; then
-        sudo -u "$ORIGINAL_USER" GOPROXY="${GOPROXY}" vim -es -u NONE \
-            -c "set runtimepath+=$ORIGINAL_HOME/.vim/pack/plugins/start/vim-go" \
-            -c "runtime ftplugin/go.vim" \
-            -c "GoInstallBinaries" \
-            -c "qa!" "$test_file" 2>/dev/null || true
-    else
-        GOPROXY="${GOPROXY}" vim -es -u NONE \
-            -c "set runtimepath+=$ORIGINAL_HOME/.vim/pack/plugins/start/vim-go" \
-            -c "runtime ftplugin/go.vim" \
-            -c "GoInstallBinaries" \
-            -c "qa!" "$test_file" 2>/dev/null || true
+    if command -v vim >/dev/null 2>&1; then
+        if [ "$ORIGINAL_USER" != "$USER" ]; then
+            sudo -u "$ORIGINAL_USER" GOPROXY="${GOPROXY}" vim -es -u NONE                 -c "set runtimepath+=$ORIGINAL_HOME/.vim/pack/plugins/start/vim-go"                 -c "runtime ftplugin/go.vim"                 -c "GoInstallBinaries"                 -c "qa!" "$test_file" 2>/dev/null || true
+        else
+            GOPROXY="${GOPROXY}" vim -es -u NONE                 -c "set runtimepath+=$ORIGINAL_HOME/.vim/pack/plugins/start/vim-go"                 -c "runtime ftplugin/go.vim"                 -c "GoInstallBinaries"                 -c "qa!" "$test_file" 2>/dev/null || true
+        fi
     fi
 
     rm -f "$test_file"
@@ -285,13 +283,12 @@ configure_vimrc
 
 # 验证二进制工具
 log info "正在验证已安装的 Go 工具..."
-gopath_bin=$(sudo -u "$ORIGINAL_USER" go env GOPATH 2>/dev/null || go env GOPATH 2>/dev/null || echo "$ORIGINAL_HOME/go")/bin
+gopath_bin=$(go env GOPATH 2>/dev/null || echo "$ORIGINAL_HOME/go")/bin
 
 if [ -d "$gopath_bin" ]; then
     installed_tools=$(ls "$gopath_bin" 2>/dev/null | tr '
-' ' ')
-    log info "已在 $gopath_bin 中检测到以下 Go 工具:"
-    log info "$installed_tools"
+' ' ' || echo "")
+    log info "已在 $gopath_bin 中检测到以下 Go 工具: $installed_tools"
 else
     log warn "未找到 $gopath_bin 目录，请确保 GOPATH/bin 已加入系统 PATH 环境变量"
 fi
