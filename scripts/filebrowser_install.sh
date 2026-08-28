@@ -696,7 +696,74 @@ function service_control {
     esac
 }
 
-# 添加多用户 (Scope 隔离)
+# 判断 FileBrowser 守护进程/服务是否正在运行
+function is_service_running {
+    local s_mgr
+    s_mgr="$(detect_service_manager)"
+    case "$s_mgr" in
+        systemd)
+            if systemctl is-active --quiet "$UNIFIED_SERVICE_NAME" 2>/dev/null; then
+                return 0
+            fi
+            ;;
+    esac
+
+    if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+        return 0
+    fi
+    if pgrep -x filebrowser >/dev/null 2>&1; then
+        return 0
+    fi
+    return 1
+}
+
+# 数据库操作前：若服务正在运行则临时暂停（释放 BoltDB 数据库独占写锁）
+function pause_service_if_running {
+    if is_service_running; then
+        WAS_RUNNING=true
+        log info "检测到 FileBrowser 服务正在运行 (锁定数据库)，正在临时暂停服务以释放数据库锁..."
+        local s_mgr
+        s_mgr="$(detect_service_manager)"
+        case "$s_mgr" in
+            systemd)
+                systemctl stop "$UNIFIED_SERVICE_NAME" >/dev/null 2>&1 || true
+                ;;
+            *)
+                if [ -f "$SYSVINIT_FILE" ]; then
+                    "$SYSVINIT_FILE" stop >/dev/null 2>&1 || true
+                fi
+                killall filebrowser >/dev/null 2>&1 || true
+                ;;
+        esac
+        sleep 1
+    else
+        WAS_RUNNING=false
+    fi
+}
+
+# 数据库操作后：若先前在运行则自动恢复运行
+function resume_service_if_was_running {
+    if [ "${WAS_RUNNING:-false}" = true ]; then
+        log info "数据库配置更新完成，正在自动恢复 FileBrowser 服务运行..."
+        local s_mgr
+        s_mgr="$(detect_service_manager)"
+        case "$s_mgr" in
+            systemd)
+                systemctl start "$UNIFIED_SERVICE_NAME" >/dev/null 2>&1 || true
+                ;;
+            *)
+                if [ -f "$SYSVINIT_FILE" ]; then
+                    "$SYSVINIT_FILE" start >/dev/null 2>&1 || true
+                else
+                    nohup "$INSTALL_BIN" -d "$DB_FILE" >> "$LOG_PATH" 2>&1 &
+                    echo $! > "$PID_FILE"
+                fi
+                ;;
+        esac
+        WAS_RUNNING=false
+    fi
+}
+
 # 添加多用户 (Scope 隔离)
 function do_adduser {
     load_runtime_config
@@ -723,6 +790,9 @@ function do_adduser {
         chmod 0777 "$user_scope" 2>/dev/null || true
         log info "已自动创建用户隔离物理目录: $user_scope"
     fi
+
+    pause_service_if_running
+    trap resume_service_if_was_running RETURN
 
     local user_added=false
     local curr_pass="$password"
@@ -768,11 +838,15 @@ function do_adduser {
 
         if [[ "$err_output" == *"Error:"* ]]; then
             log warn "创建/更新用户 [$username] 失败: $err_output"
-            log warn "提示: FileBrowser 密码策略拒绝弱口令，请包含大小写字母、数字或特殊字符。"
+            if [[ "$err_output" == *"timeout"* ]]; then
+                log warn "原因: 数据库文件 ($DB_FILE) 锁获取超时，请检查是否有其他 FileBrowser 进程占用。"
+            elif [[ "$err_output" == *"password is too easy"* || "$err_output" == *"password is too short"* ]]; then
+                log warn "原因: 密码安全策略拦截 (密码过于简单)，请包含大小写字母、数字或特殊字符。"
+            fi
             if [ -t 0 ]; then
                 curr_pass=""
             else
-                log error "非交互模式下密码不符合策略，操作终止。"
+                log error "非交互模式下操作失败，终止执行。"
             fi
         else
             user_added=true
@@ -789,6 +863,9 @@ function do_lsusers {
     if [ ! -f "$DB_FILE" ]; then
         log error "数据库文件不存在 ($DB_FILE)，请先安装 FileBrowser！"
     fi
+    pause_service_if_running
+    trap resume_service_if_was_running RETURN
+
     echo "========================================================"
     echo "            FileBrowser 用户列表                        "
     echo "            数据库: $DB_FILE                            "
@@ -813,8 +890,16 @@ function do_deluser {
         log error "不能删除默认管理员账户 admin！"
     fi
 
-    "$INSTALL_BIN" users rm "$username" -d "$DB_FILE" >> "$logfile" 2>&1
-    log info "用户 [$username] 已从 FileBrowser 数据库中移除。"
+    pause_service_if_running
+    trap resume_service_if_was_running RETURN
+
+    local err_output
+    err_output=$("$INSTALL_BIN" users rm "$username" -d "$DB_FILE" 2>&1 || true)
+    if [[ "$err_output" == *"Error:"* ]]; then
+        log error "删除用户 [$username] 失败: $err_output"
+    else
+        log info "用户 [$username] 已从 FileBrowser 数据库中移除。"
+    fi
 }
 
 # 重置密码
@@ -826,6 +911,9 @@ function do_setpasswd {
     if [ ! -f "$DB_FILE" ]; then
         log error "数据库文件不存在 ($DB_FILE)，请先安装 FileBrowser！"
     fi
+
+    pause_service_if_running
+    trap resume_service_if_was_running RETURN
 
     local pwd_updated=false
     local curr_pass="$new_pass"
@@ -853,7 +941,11 @@ function do_setpasswd {
         err_output=$("$INSTALL_BIN" users update "$target_user" -p "$curr_pass" -d "$DB_FILE" 2>&1 || true)
         if [[ "$err_output" == *"Error:"* ]]; then
             log warn "密码修改失败: $err_output"
-            log warn "提示: FileBrowser 密码策略拒绝弱口令，请包含大小写字母、数字或特殊字符。"
+            if [[ "$err_output" == *"timeout"* ]]; then
+                log warn "原因: 数据库文件 ($DB_FILE) 锁获取超时，请检查是否有其他 FileBrowser 进程占用。"
+            elif [[ "$err_output" == *"password is too easy"* || "$err_output" == *"password is too short"* ]]; then
+                log warn "原因: 密码安全策略拦截 (密码过于简单)，请包含大小写字母、数字或特殊字符。"
+            fi
             if [ -t 0 ]; then
                 curr_pass=""
             else
@@ -883,6 +975,9 @@ function do_setport {
     if [[ ! "$new_port" =~ ^[0-9]+$ ]] || [ "$new_port" -lt 1 ] || [ "$new_port" -gt 65535 ]; then
         log error "无效的端口号: $new_port"
     fi
+
+    pause_service_if_running
+    trap resume_service_if_was_running RETURN
 
     "$INSTALL_BIN" config set -p "$new_port" -d "$DB_FILE" >> "$logfile" 2>&1
     save_runtime_config "${ROOT_DIR:-/data}" "$new_port" "$DB_FILE"
