@@ -43,7 +43,7 @@ SYSTEMD_FILE="/etc/systemd/system/${UNIFIED_SERVICE_NAME}.service"
 SYSVINIT_FILE="/etc/init.d/${UNIFIED_SERVICE_NAME}"
 
 # 默认版本
-DEFAULT_VERSION="v2.32.0"
+DEFAULT_VERSION="v2.63.23"
 
 # 日志函数，记录操作并格式化输出
 function log {
@@ -201,42 +201,112 @@ function download_filebrowser {
     log info "正在获取 FileBrowser 安装包..."
 
     local pkg_name="linux-${TARGET_ARCH}-filebrowser.tar.gz"
-    local version="$DEFAULT_VERSION"
+    local tmp_dir="/tmp/filebrowser_install_$$"
+    rm -rf "$tmp_dir"
+    mkdir -p "$tmp_dir"
 
-    local latest_ver
-    latest_ver=$(curl -s --connect-timeout 5 "https://api.github.com/repos/filebrowser/filebrowser/releases/latest" 2>/dev/null | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' || true)
-    if [ -n "$latest_ver" ]; then
-        version="$latest_ver"
-        log info "检测到 FileBrowser 最新版本: $version"
-    else
+    # 1. 检查本地是否存在离线安装包或二进制
+    local local_search_paths=(
+        "${SCRIPT_ROOT}/${pkg_name}"
+        "./${pkg_name}"
+        "/tmp/${pkg_name}"
+        "${SCRIPT_ROOT}/filebrowser"
+        "./filebrowser"
+        "/tmp/filebrowser"
+    )
+    for p in "${local_search_paths[@]}"; do
+        if [ -f "$p" ]; then
+            if [[ "$p" == *.tar.gz ]] && tar -tzf "$p" >/dev/null 2>&1; then
+                log info "检测到本地有效离线安装包: $p，直接使用本地文件..."
+                cp -f "$p" "${tmp_dir}/${pkg_name}"
+                tar -xzf "${tmp_dir}/${pkg_name}" -C "$tmp_dir" || true
+                if [ -f "${tmp_dir}/filebrowser" ]; then
+                    cp -f "${tmp_dir}/filebrowser" "$INSTALL_BIN"
+                    chmod +x "$INSTALL_BIN"
+                    rm -rf "$tmp_dir"
+                    log info "FileBrowser 二进制安装成功 (离线包): $("$INSTALL_BIN" version 2>/dev/null || echo "$p")"
+                    return 0
+                fi
+            elif [[ "$p" == *filebrowser ]] && [ -x "$p" ]; then
+                log info "检测到本地有效可执行文件: $p，直接复制使用..."
+                cp -f "$p" "$INSTALL_BIN"
+                chmod +x "$INSTALL_BIN"
+                rm -rf "$tmp_dir"
+                log info "FileBrowser 二进制安装成功 (本地文件): $("$INSTALL_BIN" version 2>/dev/null || echo "$p")"
+                return 0
+            fi
+        fi
+    done
+
+    # 2. 版本探测 (支持 API 直连与加速镜像探测，超时快速 Fallback)
+    local version="$DEFAULT_VERSION"
+    local latest_ver=""
+    local api_urls=(
+        "https://api.github.com/repos/filebrowser/filebrowser/releases/latest"
+        "https://gh-proxy.com/https://api.github.com/repos/filebrowser/filebrowser/releases/latest"
+    )
+    for ver_url in "${api_urls[@]}"; do
+        latest_ver=$(curl -s --connect-timeout 3 -m 5 "$ver_url" 2>/dev/null | grep '"tag_name":' | head -n 1 | sed -E 's/.*"([^"]+)".*/\1/' | tr -d '[:space:]' || true)
+        if [ -n "$latest_ver" ] && [[ "$latest_ver" =~ ^v?[0-9] ]]; then
+            version="$latest_ver"
+            log info "检测到 FileBrowser 最新版本: $version"
+            break
+        fi
+    done
+
+    if [ -z "$latest_ver" ] || [[ ! "$latest_ver" =~ ^v?[0-9] ]]; then
+        version="$DEFAULT_VERSION"
         log info "使用预设稳定版本: $version"
     fi
 
-    local download_urls=(
+    # 3. 构造加速下载源列表 (涵盖高可用国内 CDN 与镜像代理)
+    local download_urls=()
+    if [ -n "$FILEBROWSER_DOWNLOAD_URL" ]; then
+        download_urls+=("$FILEBROWSER_DOWNLOAD_URL")
+    fi
+    download_urls+=(
+        "https://gh-proxy.com/https://github.com/filebrowser/filebrowser/releases/download/${version}/${pkg_name}"
+        "https://gh.ddlc.top/https://github.com/filebrowser/filebrowser/releases/download/${version}/${pkg_name}"
+        "https://ghproxy.cc/https://github.com/filebrowser/filebrowser/releases/download/${version}/${pkg_name}"
+        "https://gh.llkk.cc/https://github.com/filebrowser/filebrowser/releases/download/${version}/${pkg_name}"
+        "https://github.chenby.cn/https://github.com/filebrowser/filebrowser/releases/download/${version}/${pkg_name}"
+        "https://ghfast.top/https://github.com/filebrowser/filebrowser/releases/download/${version}/${pkg_name}"
         "https://mirror.ghproxy.com/https://github.com/filebrowser/filebrowser/releases/download/${version}/${pkg_name}"
         "https://ghproxy.net/https://github.com/filebrowser/filebrowser/releases/download/${version}/${pkg_name}"
         "https://github.com/filebrowser/filebrowser/releases/download/${version}/${pkg_name}"
     )
 
-    local tmp_dir="/tmp/filebrowser_install"
-    rm -rf "$tmp_dir"
-    mkdir -p "$tmp_dir"
-
     local download_success=false
+    local target_file="${tmp_dir}/${pkg_name}"
+
     for url in "${download_urls[@]}"; do
         log info "尝试从下载源获取: $url"
-        if wget --timeout=20 --tries=2 -O "${tmp_dir}/${pkg_name}" "$url" 2>>"$logfile" || curl -sSL --connect-timeout 10 -o "${tmp_dir}/${pkg_name}" "$url" 2>>"$logfile"; then
-            if [ -s "${tmp_dir}/${pkg_name}" ]; then
-                log info "安装包下载成功！"
-                download_success=true
-                break
-            fi
+        rm -f "$target_file"
+        
+        if command -v curl >/dev/null 2>&1; then
+            curl -f -L --connect-timeout 5 --max-time 60 --retry 1 -o "$target_file" "$url" 2>>"$logfile" || true
+        elif command -v wget >/dev/null 2>&1; then
+            wget -q --timeout=20 --tries=2 -O "$target_file" "$url" 2>>"$logfile" || true
         fi
-        log warn "当前下载源连接较慢或失败，尝试下一个源..."
+
+        # 严格验证是否为有效的 tar.gz 文件（大小 > 1MB 且 tar -tzf 测试正常）
+        local f_size=0
+        if [ -f "$target_file" ]; then
+            f_size=$(stat -c%s "$target_file" 2>/dev/null || wc -c < "$target_file" 2>/dev/null || echo 0)
+        fi
+
+        if [ "$f_size" -gt 1000000 ] && tar -tzf "$target_file" >/dev/null 2>&1; then
+            log info "安装包下载成功且完整性校验通过 (大小: $((f_size / 1024 / 1024)) MB)！"
+            download_success=true
+            break
+        else
+            log warn "当前源下载速度过慢、超时或文件校验失败，切换下一个加速源..."
+            rm -f "$target_file"
+        fi
     done
 
     if [ "$download_success" = false ]; then
-        log error "无法下载 FileBrowser 安装包，请检查网络连接。"
+        log error "无法下载 FileBrowser 安装包，请检查网络连接或手动下载 ${pkg_name} 放置于脚本目录。"
     fi
 
     log info "解压并安装二进制文件到 $INSTALL_BIN ..."
