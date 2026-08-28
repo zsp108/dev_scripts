@@ -40,45 +40,83 @@ jobs:
           make list-protobuf-versions
           make list-git-versions
 
-  os-arch-matrix:
-    name: Matrix Test (${{ matrix.os }} / ${{ matrix.arch }})
+  macos-matrix:
+    name: macOS (Apple Silicon ARM64)
     needs: lint-and-syntax
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: Ubuntu 24.04
-            arch: x86_64
-            runner: ubuntu-24.04
-          - os: Ubuntu 22.04
-            arch: x86_64
-            runner: ubuntu-22.04
-          - os: macOS (Apple Silicon)
-            arch: arm64
-            runner: macos-latest
+    runs-on: macos-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      - name: Test shell scripts syntax on ${{ matrix.os }} (${{ matrix.arch }})
+      - name: Test shell scripts syntax on macOS (ARM64)
         run: make test
 
       - name: Environment check
         run: make check
 
-  centos-matrix:
-    name: CentOS 7 (${{ matrix.arch }})
+  linux-matrix:
+    name: ${{ matrix.distro }} (${{ matrix.arch }})
     needs: lint-and-syntax
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
-          - arch: x86_64
+          # Ubuntu 系列 (x86_64 & ARM64)
+          - distro: Ubuntu 24.04
+            arch: x86_64
+            image: ubuntu:24.04
+            platform: linux/amd64
+          - distro: Ubuntu 24.04
+            arch: arm64
+            image: ubuntu:24.04
+            platform: linux/arm64
+          - distro: Ubuntu 22.04
+            arch: x86_64
+            image: ubuntu:22.04
+            platform: linux/amd64
+          - distro: Ubuntu 22.04
+            arch: arm64
+            image: ubuntu:22.04
+            platform: linux/arm64
+
+          # Debian 系列 (x86_64 & ARM64)
+          - distro: Debian 12
+            arch: x86_64
+            image: debian:12
+            platform: linux/amd64
+          - distro: Debian 12
+            arch: arm64
+            image: debian:12
+            platform: linux/arm64
+
+          # RedHat / RHEL 9 / Rocky 9 系列 (当前 RedHat 主流版本)
+          - distro: RHEL 9 (Rocky 9)
+            arch: x86_64
+            image: rockylinux:9
+            platform: linux/amd64
+          - distro: RHEL 9 (Rocky 9)
+            arch: arm64
+            image: rockylinux:9
+            platform: linux/arm64
+
+          # RedHat / RHEL 8 / CentOS 8 系列
+          - distro: RHEL 8 (CentOS 8)
+            arch: x86_64
+            image: rockylinux:8
+            platform: linux/amd64
+          - distro: RHEL 8 (CentOS 8)
+            arch: arm64
+            image: rockylinux:8
+            platform: linux/arm64
+
+          # CentOS 7 经典系列 (x86_64 & ARM64)
+          - distro: CentOS 7
+            arch: x86_64
             image: centos:7
             platform: linux/amd64
-          - arch: arm64
+          - distro: CentOS 7
+            arch: arm64
             image: arm64v8/centos:7
             platform: linux/arm64
     steps:
@@ -89,7 +127,7 @@ jobs:
         if: matrix.arch == 'arm64'
         uses: docker/setup-qemu-action@v3
 
-      - name: Test shell scripts on CentOS 7 (${{ matrix.arch }})
+      - name: Test shell scripts on ${{ matrix.distro }} (${{ matrix.arch }})
         run: |
           docker run --rm \
             --platform ${{ matrix.platform }} \
@@ -97,15 +135,22 @@ jobs:
             -w /workspace \
             ${{ matrix.image }} \
             /bin/bash -c "
-              echo '=== Running on CentOS 7 ${{ matrix.arch }} ==='
+              # CentOS 7 归档源处理
+              if [ -f /etc/yum.repos.d/CentOS-Base.repo ] && grep -q 'CentOS-7' /etc/redhat-release 2>/dev/null; then
+                sed -i 's/mirror.centos.org/vault.centos.org/g' /etc/yum.repos.d/*.repo 2>/dev/null || true
+                sed -i 's/^#.*baseurl=http/baseurl=http/g' /etc/yum.repos.d/*.repo 2>/dev/null || true
+                sed -i 's/^mirrorlist=http/#mirrorlist=http/g' /etc/yum.repos.d/*.repo 2>/dev/null || true
+              fi
+
+              echo '=== Running syntax check on ${{ matrix.distro }} (${{ matrix.arch }}) ==='
               for script in scripts/*.sh; do
                 if [ -f \"\$script\" ]; then
-                  printf '  Checking '\"\$script\"'... '
+                  printf '  Checking '"\$script"'... '
                   /bin/bash -n \"\$script\" || exit 1
                   echo 'OK'
                 fi
               done
-              echo '✓ All scripts passed syntax check on CentOS 7 (${{ matrix.arch }})'
+              echo '✓ All scripts passed syntax check on ${{ matrix.distro }} (${{ matrix.arch }})'
             "
 
   tools-lifecycle-test:
@@ -158,7 +203,7 @@ jobs:
 
   ci-summary:
     name: Generate Summary Report
-    needs: [lint-and-syntax, os-arch-matrix, centos-matrix, tools-lifecycle-test]
+    needs: [lint-and-syntax, macos-matrix, linux-matrix, tools-lifecycle-test]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -168,7 +213,7 @@ jobs:
       - name: Render CI Summary Report
         env:
           LINT_RES: ${{ needs.lint-and-syntax.result }}
-          MATRIX_RES: ${{ needs.os-arch-matrix.result }}
-          CENTOS_RES: ${{ needs.centos-matrix.result }}
+          MACOS_RES: ${{ needs.macos-matrix.result }}
+          LINUX_MATRIX_RES: ${{ needs.linux-matrix.result }}
           LIFECYCLE_RES: ${{ needs.tools-lifecycle-test.result }}
         run: python3 scripts/ci_summary.py
