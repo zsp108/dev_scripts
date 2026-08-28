@@ -1,35 +1,46 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # 脚本名称: samba_install.sh
-# 描述:     Samba 自动化安装部署与多用户存储隔离管理脚本 (参考 iStoreOS / OpenWrt 规范架构)
+# 描述:     Samba 自动化安装部署、多用户存储空间隔离与全平台挂载运维管理脚本
 # 适用系统: Debian 系列 (Ubuntu, Debian, Deepin, Mint, Kali 等)
 #           RedHat 系列 (RHEL, CentOS, Rocky Linux, AlmaLinux, Fedora, openEuler 等)
-# 适用架构: x86_64, aarch64 (ARM64), armv7l, armhf, i386 等
-# 存储模型: 基于 Base 目录动态分配专属子目录 (/data/share/<用户名>)
-#           每个用户对应独立的显式磁盘块 [用户名]，完美支持 macOS 访达侧边栏挂载与推出
-# 服务托管: 智能三级自适应探测 (systemctl ➔ service ➔ direct) + Bonjour(Avahi) 原生广播
+#           Arch 系列 (Arch Linux, Manjaro) / Alpine Linux 等
+# 适用架构: x86_64 (amd64), aarch64 (arm64), armv7l, armhf, i386
+# 存储模型: 多用户严格存储隔离 (默认基目录: /personal/samba/<用户名>)
+# 跨端优化: macOS (Finder 侧边栏/Fruit 优化/即时推出/Avahi 广播)
+#           Windows (SMB2/3 高速传输/网络驱动器映射)
+#           Linux (CIFS 原生挂载/权限映射)
+# 服务托管: 智能三级自适应探测 (systemctl ➔ service ➔ direct)
 #
 # 用法:
 #   1. 交互式运行 (自动提权):
 #      ./samba_install.sh
-#   2. 快速安装:
+#   2. 快速安装 (自动初始化配置并启动):
 #      sudo ./samba_install.sh install [共享根目录] [初始用户名] [初始密码]
-#      例如: sudo ./samba_install.sh install /data/share spz 123456
-#   3. 用户管理 (自动在 /data/share/<用户名> 创建专属隔离空间并配置独立磁盘块):
-#      sudo ./samba_install.sh adduser [用户名] [密码]
+#      例如: sudo ./samba_install.sh install /personal/samba spz 123456
+#   3. 用户管理 (专属目录隔离 /personal/samba/<用户名>):
+#      sudo ./samba_install.sh adduser [用户名] [密码] [专属根目录]
 #      sudo ./samba_install.sh deluser [用户名]
 #      sudo ./samba_install.sh lsusers
-#   4. 服务运维:
+#      sudo ./samba_install.sh passwd [用户名] [新密码]
+#   4. 服务管理:
 #      sudo ./samba_install.sh start|stop|restart|status
-#   5. 完全卸载:
+#      sudo ./samba_install.sh service register|unregister
+#   5. 查看挂载指南:
+#      sudo ./samba_install.sh guide [用户名]
+#   6. 完全卸载:
 #      sudo ./samba_install.sh uninstall
 # ==============================================================================
 
 set -e
 
-SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/" && pwd -P)"
+SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 logfile="${SCRIPT_ROOT}/samba_install.log"
+
+DEFAULT_BASE_DIR="/personal/samba"
 SMB_CONF="/etc/samba/smb.conf"
+AVAHI_DIR="/etc/avahi/services"
+AVAHI_CONF="${AVAHI_DIR}/samba.service"
 
 UNIFIED_SERVICE_NAME="samba"
 SYSTEMD_FILE="/etc/systemd/system/${UNIFIED_SERVICE_NAME}.service"
@@ -63,11 +74,11 @@ function log {
     esac
 }
 
-# 检查权限并自动提权 (Self-Elevation)
+# 检查用户权限并自动提权 (Self-Elevation)
 function check_permission {
     if [ "$EUID" -ne 0 ]; then
         if command -v sudo >/dev/null 2>&1; then
-            log info "检测到非 root 用户执行，正在自动通过 sudo 提权..."
+            log info "检测到非 root 用户执行，正在自动切换为 sudo 权限执行..."
             exec sudo bash "$0" "$@"
         else
             log error "当前不是 root 用户且系统中未找到 sudo 命令，请使用 root 用户执行此脚本。"
@@ -88,8 +99,8 @@ function get_original_user {
 
 # 检测系统与架构
 function detect_system {
-    ARCH=$(uname -m)
-    log info "检测到系统架构: $ARCH"
+    RAW_ARCH=$(uname -m)
+    log info "检测到 CPU 架构: $RAW_ARCH"
 
     if [ -f /etc/os-release ]; then
         . /etc/os-release
@@ -104,12 +115,28 @@ function detect_system {
         OS_FAMILY="debian"
         SYS_SERVICE_NAME="smbd"
         NMB_SERVICE_NAME="nmbd"
+        PKG_MGR="apt-get"
     elif [[ "$OS_ID" =~ ^(rhel|centos|fedora|rocky|almalinux|ol|anolis|openeuler|kylin)$ ]] || [[ "$OS_LIKE" =~ (rhel|fedora|centos) ]]; then
         OS_FAMILY="redhat"
         SYS_SERVICE_NAME="smb"
         NMB_SERVICE_NAME="nmb"
+        if command -v dnf >/dev/null 2>&1; then
+            PKG_MGR="dnf"
+        else
+            PKG_MGR="yum"
+        fi
+    elif [[ "$OS_ID" =~ ^(arch|manjaro)$ ]]; then
+        OS_FAMILY="arch"
+        SYS_SERVICE_NAME="smb"
+        NMB_SERVICE_NAME="nmb"
+        PKG_MGR="pacman"
+    elif [[ "$OS_ID" == "alpine" ]]; then
+        OS_FAMILY="alpine"
+        SYS_SERVICE_NAME="samba"
+        NMB_SERVICE_NAME=""
+        PKG_MGR="apk"
     else
-        log error "不支持的操作系统系列: $OS_ID ($OS_LIKE)，目前仅支持 Debian/Ubuntu 和 RHEL/CentOS 系列。"
+        log error "不支持的操作系统系列: $OS_ID ($OS_LIKE)"
     fi
 
     log info "检测到操作系统: $OS_ID $VERSION_ID (归类为 $OS_FAMILY 系列)"
@@ -126,7 +153,7 @@ function detect_service_manager {
         fi
     fi
 
-    if [ -d "/etc/init.d" ] || command -v service >/dev/null 2>&1 || command -v update-rc.d >/dev/null 2>&1 || command -v chkconfig >/dev/null 2>&1; then
+    if [ -d "/etc/init.d" ] || command -v service >/dev/null 2>&1; then
         echo "sysvinit"
         return 0
     fi
@@ -142,16 +169,16 @@ function get_local_ip {
     fi
 }
 
-# 从当前 smb.conf 获取共享基目录 (默认 /data/share)
+# 从当前 smb.conf 获取共享基目录 (默认 /personal/samba)
 function get_base_share_dir {
     local dir
     dir=$(grep -m 1 'path =' "$SMB_CONF" 2>/dev/null | awk '{print $3}' | sed -E 's|/[^/]+$||' || true)
-    echo "${dir:-/data/share}"
+    echo "${dir:-$DEFAULT_BASE_DIR}"
 }
 
 # 安装依赖与 Samba 软件包
 function install_packages {
-    log info "检查并安装 Samba 及 Bonjour 广播依赖包..."
+    log info "正在检查并安装 Samba 及 Bonjour 广播依赖包..."
 
     case "$OS_FAMILY" in
         debian)
@@ -160,28 +187,31 @@ function install_packages {
             apt-get install -y samba samba-common-bin smbclient procps avahi-daemon
             ;;
         redhat)
-            if command -v dnf >/dev/null 2>&1; then
-                PKG_MGR="dnf"
-            else
-                PKG_MGR="yum"
-            fi
             $PKG_MGR makecache -y || true
+            $PKG_MGR install -y epel-release || true
             $PKG_MGR install -y samba samba-common samba-client procps-ng avahi policycoreutils-python-utils || \
             $PKG_MGR install -y samba samba-common samba-client procps-ng avahi policycoreutils-python || \
             $PKG_MGR install -y samba samba-common samba-client procps-ng avahi || \
             $PKG_MGR install -y samba samba-common samba-client procps-ng
+            ;;
+        arch)
+            pacman -Sy --noconfirm samba avahi
+            ;;
+        alpine)
+            apk update
+            apk add samba samba-common-tools avahi
             ;;
     esac
 
     log info "Samba 与 Bonjour 相关软件包安装完成。"
 }
 
-# 配置 macOS Bonjour (mDNS / Avahi) 网络广播 (让 Mac 侧边栏自动常驻服务器并支持推出)
+# 配置 macOS Bonjour (mDNS / Avahi) 网络广播
 function configure_avahi {
-    log info "正在配置 macOS Bonjour (mDNS / Avahi) 网络广播服务..."
+    log info "正在配置 macOS 访达 / Windows 局域网 Bonjour (mDNS / Avahi) 网络广播..."
 
-    mkdir -p /etc/avahi/services
-    cat << 'EOF' > /etc/avahi/services/samba.service
+    mkdir -p "$AVAHI_DIR"
+    cat << 'EOF_AVAHI' > "$AVAHI_CONF"
 <?xml version="1.0" standalone="no"?>
 <!DOCTYPE service-group SYSTEM "avahi-service.dtd">
 <service-group>
@@ -196,12 +226,14 @@ function configure_avahi {
     <txt-record>model=Macmini</txt-record>
   </service>
 </service-group>
-EOF
+EOF_AVAHI
 
-    if command -v systemctl >/dev/null 2>&1 && systemctl is-system-running >/dev/null 2>&1; then
+    local mgr
+    mgr=$(detect_service_manager)
+    if [ "$mgr" = "systemd" ]; then
         systemctl restart avahi-daemon 2>/dev/null || true
         systemctl enable avahi-daemon 2>/dev/null || true
-    elif command -v service >/dev/null 2>&1; then
+    elif [ "$mgr" = "sysvinit" ] && command -v service >/dev/null 2>&1; then
         service avahi-daemon restart 2>/dev/null || true
     fi
 
@@ -228,10 +260,10 @@ function configure_firewall {
 
     if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qw "active"; then
         ufw allow samba >/dev/null 2>&1 || {
-            ufw allow 137/udp
-            ufw allow 138/udp
-            ufw allow 139/tcp
-            ufw allow 445/tcp
+            ufw allow 137/udp >/dev/null 2>&1 || true
+            ufw allow 138/udp >/dev/null 2>&1 || true
+            ufw allow 139/tcp >/dev/null 2>&1 || true
+            ufw allow 445/tcp >/dev/null 2>&1 || true
         }
         log info "已在 ufw 中放行 Samba 规则。"
     fi
@@ -253,7 +285,7 @@ function configure_selinux {
                     semanage fcontext -a -t samba_share_t "${target_dir}(/.*)?" >/dev/null 2>&1 || true
                     restorecon -R -v "$target_dir" >> "$logfile" 2>&1 || true
                 else
-                    chcon -t samba_share_t "$target_dir" >/dev/null 2>&1 || true
+                    chcon -R -t samba_share_t "$target_dir" >/dev/null 2>&1 || true
                 fi
             fi
             log info "SELinux 规则配置完成。"
@@ -261,7 +293,7 @@ function configure_selinux {
     fi
 }
 
-# 初始化 /etc/samba/smb.conf 全局模板 (严格参考 iStoreOS 苹果优化架构)
+# 初始化 /etc/samba/smb.conf 全局模板 (集成 macOS Fruit、Windows SMB2/3 与 Linux 深度优化)
 function init_smb_global_conf {
     local backup_conf="/etc/samba/smb.conf.bak.$(date +%Y%m%d%H%M%S)"
     log info "正在生成 Samba 全局基础配置 ($SMB_CONF)..."
@@ -272,20 +304,20 @@ function init_smb_global_conf {
         log info "已备份原配置文件到: $backup_conf"
     fi
 
-    cat << 'EOF' > "$SMB_CONF"
+    cat << 'EOF_SMB' > "$SMB_CONF"
 # ==============================================================================
-# Samba Configuration (Generated by samba_install.sh - iStoreOS/OpenWrt Style)
+# Universal Multi-User Isolated Samba Configuration
 # ==============================================================================
 
 [global]
     workgroup = WORKGROUP
-    server string = Samba File Server
+    server string = Universal Samba Server
     netbios name = SambaServer
     security = user
     map to guest = Bad User
     dns proxy = no
 
-    # 协议与性能优化 (参考 iStoreOS / OpenWrt 生产级参数)
+    # 协议与传输性能优化 (全平台高速读写)
     min protocol = SMB2
     max protocol = SMB3
     use sendfile = yes
@@ -294,7 +326,7 @@ function init_smb_global_conf {
     ea support = yes
     smb2 leases = yes
 
-    # 连接断开与锁即时释放优化 (彻底解决 macOS 推出卡顿/文件句柄残留)
+    # 连接断开与锁即时释放优化 (解决 macOS 推出卡顿/文件句柄残留)
     deadtime = 10
     reset on zero vc = yes
 
@@ -318,21 +350,21 @@ function init_smb_global_conf {
     printcap name = /dev/null
     disable spoolss = yes
 
-EOF
+EOF_SMB
 
     log info "Samba 全局基础配置写入完成。"
 }
 
-# 注册/追加单个用户的专属独立磁盘卷 [用户名] (对应 /data/share/<用户名>)
+# 注册/追加单个用户的专属隔离存储目录 (/personal/samba/<用户名>)
 function add_user_to_samba {
     local username="$1"
     local password="$2"
-    local base_dir="${3:-/data/share}"
+    local base_dir="${3:-$DEFAULT_BASE_DIR}"
     local user_dir="${base_dir}/${username}"
 
-    log info "正在配置用户 [$username] 专属隔离存储..."
+    log info "正在配置用户 [$username] 专属隔离存储空间..."
 
-    # 1. 确保系统用户存在 (无 shell 登录权限)
+    # 1. 确保系统用户存在 (禁止直接交互登录 shell)
     if ! id "$username" >/dev/null 2>&1; then
         log info "创建系统用户 [$username]..."
         useradd -M -s /usr/sbin/nologin "$username" 2>/dev/null || \
@@ -345,16 +377,16 @@ function add_user_to_samba {
     (echo "$password"; echo "$password") | smbpasswd -s -a "$username" >> "$logfile" 2>&1
     smbpasswd -e "$username" >/dev/null 2>&1 || true
 
-    # 3. 创建专属子目录并设置 0777 权限 (保证 Mac/Windows/Linux 可自由创建 .DS_Store 及写入文件)
+    # 3. 创建专属子目录并设置 0777 权限 (保证 Mac/Windows/Linux 可自由写入并严格通过 Samba 鉴权隔离)
     mkdir -p "$user_dir"
     chown -R "${username}:${username}" "$user_dir" 2>/dev/null || chown -R "${username}" "$user_dir" 2>/dev/null || true
     chmod 0777 "$user_dir"
-    log info "用户专属目录已就绪: $user_dir (权限: 0777 / 归属: $username)"
+    log info "用户专属目录已就绪: $user_dir (归属: $username)"
 
-    # 4. 在 smb.conf 中注册显式专属共享块 [用户名] (按 iStoreOS 规范)
+    # 4. 在 smb.conf 中注册显式专属共享块 [$username]
     if ! grep -q "^\[$username\]" "$SMB_CONF" 2>/dev/null; then
         log info "在 $SMB_CONF 中写入独立磁盘块 [$username]..."
-        cat << EOF >> "$SMB_CONF"
+        cat << EOF_USER >> "$SMB_CONF"
 
 # ------------------------------------------------------------------------------
 # 👤 用户 [$username] 专属存储磁盘 (目录: $user_dir)
@@ -367,6 +399,7 @@ function add_user_to_samba {
     read only = no
     guest ok = no
     valid users = $username
+    force user = $username
     create mask = 0666
     directory mask = 0777
     force create mode = 0666
@@ -374,21 +407,17 @@ function add_user_to_samba {
     vfs objects = catia fruit streams_xattr
     fruit:locking = none
 
-EOF
+EOF_USER
     else
         log info "用户 [$username] 的磁盘块已存在于 $SMB_CONF 中，跳过重复写入。"
     fi
 
-    # 5. 语法检测与服务热重载
+    # 5. 语法检测与服务重载
     if command -v testparm >/dev/null 2>&1; then
         testparm -s "$SMB_CONF" >/dev/null 2>&1 || true
     fi
 
-    if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet "$SYS_SERVICE_NAME" 2>/dev/null; then
-        systemctl reload "$SYS_SERVICE_NAME" 2>/dev/null || systemctl restart "$SYS_SERVICE_NAME" 2>/dev/null || true
-    elif command -v service >/dev/null 2>&1; then
-        service "$UNIFIED_SERVICE_NAME" reload 2>/dev/null || service "$UNIFIED_SERVICE_NAME" restart 2>/dev/null || true
-    fi
+    service_control reload || service_control restart || true
 
     log info "✅ 用户 [$username] 专属独立磁盘卷 [$username] 配置并生效成功！"
 }
@@ -400,42 +429,95 @@ function remove_user_from_samba {
     base_dir="$(get_base_share_dir)"
     local user_dir="${base_dir}/${username}"
 
-    log info "正在从 Samba 中移除用户 [$username]..."
+    log info "正在删除用户 [$username] 的 Samba 共享权限与配置..."
+
+    # 从 Samba 用户数据库删除
     smbpasswd -x "$username" >> "$logfile" 2>&1 || true
 
-    if [ -f "$SMB_CONF" ] && grep -q "^\[$username\]" "$SMB_CONF"; then
-        log info "正在从 $SMB_CONF 清理 [$username] 磁盘块..."
-        sed -i "/^#.*$username.*专属存储磁盘/,/^\[$username\]/,/^vfs objects =/d" "$SMB_CONF" 2>/dev/null || \
-        sed -i "/^\[$username\]/,/^$/d" "$SMB_CONF" 2>/dev/null || true
-        
-        if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet "$SYS_SERVICE_NAME" 2>/dev/null; then
-            systemctl reload "$SYS_SERVICE_NAME" 2>/dev/null || true
-        elif command -v service >/dev/null 2>&1; then
-            service "$UNIFIED_SERVICE_NAME" reload 2>/dev/null || true
-        fi
+    # 从 smb.conf 中删除配置段
+    if [ -f "$SMB_CONF" ]; then
+        sed -i "/# 👤 用户 \[${username}\]/,/^$/d" "$SMB_CONF" 2>/dev/null || true
+        sed -i "/^\[${username}\]/,/^$/d" "$SMB_CONF" 2>/dev/null || true
     fi
 
-    read -r -p "是否同时删除该用户的实际物理数据目录 ($user_dir)? [y/N]: " del_data
-    if [[ "$del_data" =~ ^[Yy]$ ]]; then
-        rm -rf "${user_dir:?}"
-        log info "已删除用户数据目录: $user_dir"
-    else
-        log info "已保留用户实际数据目录: $user_dir"
-    fi
+    # 热重载服务
+    service_control reload || service_control restart || true
 
-    read -r -p "是否同时删除 Linux 系统账户 [$username]? [y/N]: " del_sys_user
-    if [[ "$del_sys_user" =~ ^[Yy]$ ]]; then
-        userdel "$username" 2>/dev/null || true
-        log info "已删除 Linux 系统账户 [$username]"
+    log info "用户 [$username] 已从 Samba 服务中注销。"
+    if [ -d "$user_dir" ]; then
+        log warn "用户物理数据目录保留未删: $user_dir (如需彻底清理请手动执行 rm -rf $user_dir)"
     fi
-
-    log info "用户 [$username] 删除完成。"
 }
 
-# 生成 SysVinit 脚本 (/etc/init.d/samba)
-function generate_sysvinit_script {
-    mkdir -p /etc/init.d
-    cat << 'EOF' > "$SYSVINIT_FILE"
+# 重置用户密码
+function set_user_password {
+    local username="$1"
+    local password="$2"
+
+    log info "正在修改用户 [$username] 的 Samba 访问密码..."
+    (echo "$password"; echo "$password") | smbpasswd -s -a "$username" >> "$logfile" 2>&1
+    smbpasswd -e "$username" >/dev/null 2>&1 || true
+    log info "用户 [$username] 密码修改成功。"
+}
+
+# 列出当前所有配置的 Samba 隔离用户
+function list_samba_users {
+    log info "========== 当前 Samba 注册用户列表 =========="
+    local count=0
+    local base_dir
+    base_dir="$(get_base_share_dir)"
+
+    if [ -f "$SMB_CONF" ]; then
+        while read -r line; do
+            local user
+            user=$(echo "$line" | sed 's/\[//;s/\]//')
+            if [ "$user" != "global" ] && [ -n "$user" ]; then
+                local u_path
+                u_path=$(grep -A 10 "^\[$user\]" "$SMB_CONF" | grep 'path =' | awk '{print $3}' | head -n 1)
+                echo -e "  \033[36m• 用户名:\033[0m ${user}  \033[33m| 映射目录:\033[0m ${u_path:-$base_dir/$user}"
+                count=$((count + 1))
+            fi
+        done < <(grep -E '^\[[a-zA-Z0-9_-]+\]' "$SMB_CONF")
+    fi
+
+    if [ "$count" -eq 0 ]; then
+        echo "  (暂未配置任何共享用户)"
+    fi
+    log info "============================================="
+}
+
+# 注册统一服务托管
+function register_service {
+    local mgr
+    mgr=$(detect_service_manager)
+    log info "正在为 Samba 注册系统服务 (托管方式: $mgr)..."
+
+    if [ "$mgr" = "systemd" ]; then
+        cat << EOF_SYS > "$SYSTEMD_FILE"
+[Unit]
+Description=Samba SMB Daemon (Universal Service)
+After=network.target network-online.target nmbd.service winbind.service avahi-daemon.service
+Wants=network-online.target
+
+[Service]
+Type=forking
+PIDFile=/run/samba/smbd.pid
+LimitNOFILE=16384
+ExecStart=/usr/sbin/smbd -D
+ExecReload=/bin/kill -HUP \$MAINPID
+Restart=on-failure
+RestartSec=3s
+
+[Install]
+WantedBy=multi-user.target
+EOF_SYS
+        systemctl daemon-reload
+        systemctl enable "${UNIFIED_SERVICE_NAME}" >> "$logfile" 2>&1 || true
+        systemctl enable "$SYS_SERVICE_NAME" >> "$logfile" 2>&1 || true
+        [ -n "$NMB_SERVICE_NAME" ] && systemctl enable "$NMB_SERVICE_NAME" >> "$logfile" 2>&1 || true
+        log info "已注册 systemd 服务: ${UNIFIED_SERVICE_NAME}.service"
+    elif [ "$mgr" = "sysvinit" ]; then
+        cat << 'EOF_SYSV' > "$SYSVINIT_FILE"
 #!/bin/sh
 ### BEGIN INIT INFO
 # Provides:          samba
@@ -443,530 +525,356 @@ function generate_sysvinit_script {
 # Required-Stop:     $network $local_fs $remote_fs
 # Default-Start:     2 3 4 5
 # Default-Stop:      0 1 6
-# Short-Description: Samba SMB/CIFS daemon
-# Description:       Unified Samba Service Managed by samba_install.sh
+# Short-Description: Start Samba daemon
 ### END INIT INFO
 
-SMBD_BIN="$(command -v smbd 2>/dev/null || echo "/usr/sbin/smbd")"
-NMBD_BIN="$(command -v nmbd 2>/dev/null || echo "/usr/sbin/nmbd")"
-PID_DIR="/var/run/samba"
-SMBD_PID="$PID_DIR/smbd.pid"
-NMBD_PID="$PID_DIR/nmbd.pid"
-
-mkdir -p "$PID_DIR" 2>/dev/null || true
-
-start() {
-    echo "Starting Samba services..."
-    if [ -x "/etc/init.d/smbd" ] && [ "/etc/init.d/smbd" != "/etc/init.d/samba" ]; then
-        /etc/init.d/smbd start 2>/dev/null || true
-        [ -x "/etc/init.d/nmbd" ] && /etc/init.d/nmbd start 2>/dev/null || true
-    elif [ -x "/etc/init.d/smb" ] && [ "/etc/init.d/smb" != "/etc/init.d/samba" ]; then
-        /etc/init.d/smb start 2>/dev/null || true
-        [ -x "/etc/init.d/nmb" ] && /etc/init.d/nmb start 2>/dev/null || true
-    else
-        [ -x "$SMBD_BIN" ] && "$SMBD_BIN" -D
-        [ -x "$NMBD_BIN" ] && "$NMBD_BIN" -D 2>/dev/null || true
-    fi
-    sleep 1
-    status
-}
-
-stop() {
-    echo "Stopping Samba services..."
-    if [ -x "/etc/init.d/smbd" ] && [ "/etc/init.d/smbd" != "/etc/init.d/samba" ]; then
-        /etc/init.d/smbd stop 2>/dev/null || true
-        [ -x "/etc/init.d/nmbd" ] && /etc/init.d/nmbd stop 2>/dev/null || true
-    elif [ -x "/etc/init.d/smb" ] && [ "/etc/init.d/smb" != "/etc/init.d/samba" ]; then
-        /etc/init.d/smb stop 2>/dev/null || true
-        [ -x "/etc/init.d/nmb" ] && /etc/init.d/nmb stop 2>/dev/null || true
-    fi
-
-    killall smbd 2>/dev/null || true
-    killall nmbd 2>/dev/null || true
-    rm -f "$SMBD_PID" "$NMBD_PID" 2>/dev/null || true
-    echo "Samba services stopped."
-}
-
-status() {
-    if pgrep -x smbd >/dev/null 2>&1 || pgrep smbd >/dev/null 2>&1; then
-        local pids
-        pids=$(pgrep smbd 2>/dev/null | tr '\n' ' ')
-        echo "🟢 Samba (smbd) 正在运行 (PID: $pids)"
-        return 0
-    else
-        echo "🔴 Samba (smbd) 未运行"
-        return 1
-    fi
-}
-
 case "$1" in
-    start)   start ;;
-    stop)    stop ;;
-    restart) stop; sleep 1; start ;;
-    status)  status ;;
+    start)
+        smbd -D 2>/dev/null || /usr/sbin/smbd -D
+        ;;
+    stop)
+        killall smbd 2>/dev/null || true
+        ;;
+    restart|reload)
+        $0 stop
+        sleep 1
+        $0 start
+        ;;
+    status)
+        pidof smbd >/dev/null && echo "samba is running" || echo "samba is stopped"
+        ;;
     *)
-        echo "Usage: service samba {start|stop|restart|status}"
+        echo "Usage: $0 {start|stop|restart|reload|status}"
         exit 1
         ;;
 esac
 exit 0
-EOF
-    chmod +x "$SYSVINIT_FILE"
+EOF_SYSV
+        chmod +x "$SYSVINIT_FILE"
+        if command -v update-rc.d >/dev/null 2>&1; then
+            update-rc.d "${UNIFIED_SERVICE_NAME}" defaults >> "$logfile" 2>&1 || true
+        elif command -v chkconfig >/dev/null 2>&1; then
+            chkconfig --add "${UNIFIED_SERVICE_NAME}" >> "$logfile" 2>&1 || true
+        fi
+        log info "已生成 SysVinit 启动脚本: $SYSVINIT_FILE"
+    fi
 }
 
-# 注册统一系统服务 (支持 systemctl 与 service 双模自适应)
-function register_service {
-    log info "开始注册并配置 Samba 系统服务..."
-    local s_mgr
-    s_mgr="$(detect_service_manager)"
-
-    generate_sysvinit_script
-
-    case "$s_mgr" in
-        systemd)
-            log info "【方案一：systemd 生效】正在注册统一服务 [${UNIFIED_SERVICE_NAME}.service]..."
-
-            cat << EOF > "$SYSTEMD_FILE"
-[Unit]
-Description=Samba Service (Unified Service Managed by samba_install.sh)
-After=network.target network-online.target nss-lookup.target
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=/bin/sh -c 'systemctl start $SYS_SERVICE_NAME $NMB_SERVICE_NAME 2>/dev/null || systemctl start $SYS_SERVICE_NAME 2>/dev/null || /etc/init.d/samba start'
-ExecStop=/bin/sh -c 'systemctl stop $SYS_SERVICE_NAME $NMB_SERVICE_NAME 2>/dev/null || systemctl stop $SYS_SERVICE_NAME 2>/dev/null || /etc/init.d/samba stop'
-ExecReload=/bin/sh -c 'systemctl reload-or-restart $SYS_SERVICE_NAME 2>/dev/null || /etc/init.d/samba restart'
-
-[Install]
-WantedBy=multi-user.target
-EOF
-            chmod 644 "$SYSTEMD_FILE"
-            systemctl daemon-reload
-
-            systemctl enable "$SYS_SERVICE_NAME" 2>/dev/null || true
-            systemctl enable "$NMB_SERVICE_NAME" 2>/dev/null || true
-            systemctl enable "$UNIFIED_SERVICE_NAME" 2>/dev/null || true
-
-            systemctl restart "$SYS_SERVICE_NAME" 2>/dev/null || true
-            systemctl restart "$NMB_SERVICE_NAME" 2>/dev/null || true
-            systemctl restart "$UNIFIED_SERVICE_NAME" 2>/dev/null || true
-
-            log info "✅ systemd 服务注册并自启成功！"
-            log info "   • 运维命令: systemctl {start|stop|restart|status} samba"
-            ;;
-
-        sysvinit|direct)
-            log warn "ℹ️ 未检测到活跃的 systemd 守护进程 (常见于 Docker / 容器 / WSL1 环境)。"
-            log info "【方案二：service 生效】正在注册为 SysVinit (service) 系统服务..."
-
-            if command -v update-rc.d >/dev/null 2>&1; then
-                update-rc.d "$UNIFIED_SERVICE_NAME" defaults 2>/dev/null || true
-            elif command -v chkconfig >/dev/null 2>&1; then
-                chkconfig --add "$UNIFIED_SERVICE_NAME" 2>/dev/null || true
-                chkconfig "$UNIFIED_SERVICE_NAME" on 2>/dev/null || true
-            fi
-
-            if command -v service >/dev/null 2>&1; then
-                service "$UNIFIED_SERVICE_NAME" restart || "$SYSVINIT_FILE" restart
-            else
-                "$SYSVINIT_FILE" restart
-            fi
-
-            log info "✅ SysVinit (service) 服务注册并启动成功！"
-            log info "   • 运维命令: service samba {start|stop|restart|status}"
-            ;;
-    esac
-}
-
-# 注销系统服务
+# 注销服务
 function unregister_service {
+    local mgr
+    mgr=$(detect_service_manager)
     log info "正在注销 Samba 系统服务..."
 
-    if [ -f "$SYSTEMD_FILE" ]; then
-        if command -v systemctl >/dev/null 2>&1; then
-            systemctl stop "$UNIFIED_SERVICE_NAME" 2>/dev/null || true
-            systemctl disable "$UNIFIED_SERVICE_NAME" 2>/dev/null || true
-        fi
+    if [ "$mgr" = "systemd" ]; then
+        systemctl disable "${UNIFIED_SERVICE_NAME}" 2>/dev/null || true
+        systemctl disable "$SYS_SERVICE_NAME" 2>/dev/null || true
         rm -f "$SYSTEMD_FILE"
-        if command -v systemctl >/dev/null 2>&1; then
-            systemctl daemon-reload 2>/dev/null || true
-        fi
-        log info "已移除 systemd 服务: $SYSTEMD_FILE"
-    fi
-
-    if [ -f "$SYSVINIT_FILE" ]; then
-        if command -v service >/dev/null 2>&1; then
-            service "$UNIFIED_SERVICE_NAME" stop 2>/dev/null || true
-        else
-            "$SYSVINIT_FILE" stop 2>/dev/null || true
-        fi
-
+        systemctl daemon-reload
+    elif [ "$mgr" = "sysvinit" ]; then
         if command -v update-rc.d >/dev/null 2>&1; then
-            update-rc.d -f "$UNIFIED_SERVICE_NAME" remove 2>/dev/null || true
+            update-rc.d -f "${UNIFIED_SERVICE_NAME}" remove 2>/dev/null || true
         elif command -v chkconfig >/dev/null 2>&1; then
-            chkconfig --del "$UNIFIED_SERVICE_NAME" 2>/dev/null || true
+            chkconfig --del "${UNIFIED_SERVICE_NAME}" 2>/dev/null || true
         fi
         rm -f "$SYSVINIT_FILE"
-        log info "已移除 SysVinit 服务: $SYSVINIT_FILE"
     fi
+    log info "服务注销完成。"
 }
 
-# 服务控制
+# 服务启停与状态控制 (三级自适应探测)
 function service_control {
     local action="$1"
-    local s_mgr
-    s_mgr="$(detect_service_manager)"
+    local mgr
+    mgr=$(detect_service_manager)
 
-    log info "正在执行服务操作: $action ..."
-
-    case "$s_mgr" in
-        systemd)
-            case "$action" in
-                start|stop|restart)
-                    systemctl "$action" "$SYS_SERVICE_NAME" 2>/dev/null || true
-                    systemctl "$action" "$NMB_SERVICE_NAME" 2>/dev/null || true
-                    systemctl "$action" "$UNIFIED_SERVICE_NAME" 2>/dev/null || true
-                    log info "Samba 服务 [$action] 完成。"
-                    ;;
-                status)
-                    get_local_ip
-                    echo "--------------------------------------------------------"
-                    echo "内网 IP: $LOCAL_IP"
-                    echo "服务运行状态 ($SYS_SERVICE_NAME):"
-                    systemctl status "$SYS_SERVICE_NAME" --no-pager 2>/dev/null || true
-                    echo "--------------------------------------------------------"
-                    if [ -f "$SMB_CONF" ]; then
-                        echo "当前已注册的共享磁盘卷:"
-                        grep -E '^\s*\[.*\]' "$SMB_CONF" | grep -v '\[global\]' || echo "无"
-                    fi
-                    ;;
-            esac
+    case "$action" in
+        start)
+            log info "正在启动 Samba 服务..."
+            if [ "$mgr" = "systemd" ]; then
+                systemctl start "${UNIFIED_SERVICE_NAME}" 2>/dev/null || systemctl start "$SYS_SERVICE_NAME" 2>/dev/null || smbd -D
+            elif [ "$mgr" = "sysvinit" ]; then
+                service "${UNIFIED_SERVICE_NAME}" start 2>/dev/null || service "$SYS_SERVICE_NAME" start 2>/dev/null || "$SYSVINIT_FILE" start 2>/dev/null || smbd -D
+            else
+                smbd -D
+            fi
+            sleep 1
+            service_control status
             ;;
-
-        sysvinit|direct)
-            if [ -f "$SYSVINIT_FILE" ]; then
-                if command -v service >/dev/null 2>&1; then
-                    service "$UNIFIED_SERVICE_NAME" "$action"
+        stop)
+            log info "正在停止 Samba 服务..."
+            if [ "$mgr" = "systemd" ]; then
+                systemctl stop "${UNIFIED_SERVICE_NAME}" 2>/dev/null || systemctl stop "$SYS_SERVICE_NAME" 2>/dev/null || killall smbd 2>/dev/null || true
+            elif [ "$mgr" = "sysvinit" ]; then
+                service "${UNIFIED_SERVICE_NAME}" stop 2>/dev/null || service "$SYS_SERVICE_NAME" stop 2>/dev/null || "$SYSVINIT_FILE" stop 2>/dev/null || killall smbd 2>/dev/null || true
+            else
+                killall smbd 2>/dev/null || true
+            fi
+            log info "Samba 服务已停止。"
+            ;;
+        restart)
+            log info "正在重启 Samba 服务..."
+            if [ "$mgr" = "systemd" ]; then
+                systemctl restart "${UNIFIED_SERVICE_NAME}" 2>/dev/null || systemctl restart "$SYS_SERVICE_NAME" 2>/dev/null || { killall smbd 2>/dev/null || true; sleep 1; smbd -D; }
+            elif [ "$mgr" = "sysvinit" ]; then
+                service "${UNIFIED_SERVICE_NAME}" restart 2>/dev/null || service "$SYS_SERVICE_NAME" restart 2>/dev/null || { killall smbd 2>/dev/null || true; sleep 1; smbd -D; }
+            else
+                killall smbd 2>/dev/null || true
+                sleep 1
+                smbd -D
+            fi
+            sleep 1
+            service_control status
+            ;;
+        reload)
+            log info "正在热重载 Samba 配置..."
+            if [ "$mgr" = "systemd" ]; then
+                systemctl reload "${UNIFIED_SERVICE_NAME}" 2>/dev/null || systemctl reload "$SYS_SERVICE_NAME" 2>/dev/null || smbcontrol smbd reload-config 2>/dev/null || true
+            elif [ "$mgr" = "sysvinit" ]; then
+                service "${UNIFIED_SERVICE_NAME}" reload 2>/dev/null || service "$SYS_SERVICE_NAME" reload 2>/dev/null || smbcontrol smbd reload-config 2>/dev/null || true
+            else
+                smbcontrol smbd reload-config 2>/dev/null || true
+            fi
+            ;;
+        status)
+            log info "检查 Samba 服务运行状态:"
+            if [ "$mgr" = "systemd" ]; then
+                if systemctl is-active --quiet "${UNIFIED_SERVICE_NAME}" 2>/dev/null || systemctl is-active --quiet "$SYS_SERVICE_NAME" 2>/dev/null; then
+                    echo -e "  \033[32m● Samba 服务正在运行 (systemd: active)\033[0m"
                 else
-                    "$SYSVINIT_FILE" "$action"
+                    echo -e "  \033[31m● Samba 服务未运行\033[0m"
                 fi
             else
-                case "$action" in
-                    start)
-                        smbd -D 2>/dev/null || /usr/sbin/smbd -D 2>/dev/null
-                        nmbd -D 2>/dev/null || /usr/sbin/nmbd -D 2>/dev/null || true
-                        log info "Samba 守护进程已启动。"
-                        ;;
-                    stop)
-                        killall smbd 2>/dev/null || true
-                        killall nmbd 2>/dev/null || true
-                        log info "Samba 守护进程已停止。"
-                        ;;
-                    restart)
-                        killall smbd 2>/dev/null || true
-                        killall nmbd 2>/dev/null || true
-                        sleep 1
-                        smbd -D 2>/dev/null || /usr/sbin/smbd -D 2>/dev/null
-                        nmbd -D 2>/dev/null || /usr/sbin/nmbd -D 2>/dev/null || true
-                        log info "Samba 守护进程已重启。"
-                        ;;
-                    status)
-                        if pgrep smbd >/dev/null 2>&1; then
-                            echo "🟢 Samba (smbd) 正在运行 (PID: $(pgrep smbd | tr '\n' ' '))"
-                        else
-                            echo "🔴 Samba (smbd) 未运行"
-                        fi
-                        ;;
-                esac
-            fi
-
-            if [ "$action" = "status" ]; then
-                get_local_ip
-                echo "--------------------------------------------------------"
-                echo "内网 IP: $LOCAL_IP"
-                if [ -f "$SMB_CONF" ]; then
-                    echo "当前已注册的共享磁盘卷:"
-                    grep -E '^\s*\[.*\]' "$SMB_CONF" | grep -v '\[global\]' || echo "无"
+                if pidof smbd >/dev/null 2>&1; then
+                    echo -e "  \033[32m● Samba 服务正在运行 (PID: $(pidof smbd | tr '\n' ' '))\033[0m"
+                else
+                    echo -e "  \033[31m● Samba 服务未运行\033[0m"
                 fi
-                echo "--------------------------------------------------------"
             fi
             ;;
     esac
 }
 
-# 列出当前所有 Samba 共享用户
-function do_lsusers {
-    echo ""
-    echo "========================================================"
-    echo "            Samba 已注册共享磁盘列表                    "
-    echo "========================================================"
-    if [ -f "$SMB_CONF" ]; then
-        grep -E '^\s*\[.*\]' "$SMB_CONF" | grep -v '\[global\]' | while read -r line; do
-            local sname
-            sname=$(echo "$line" | tr -d '[]')
-            local spath
-            spath=$(grep -A 4 "\[$sname\]" "$SMB_CONF" 2>/dev/null | grep 'path =' | awk '{print $3}')
-            local suser
-            suser=$(grep -A 7 "\[$sname\]" "$SMB_CONF" 2>/dev/null | grep 'valid users =' | awk '{print $4}')
-            echo "• 共享磁盘: [$sname] ➔ 物理路径: $spath (授权用户: ${suser:-所有人})"
-        done
-    else
-        echo "暂未发现 Samba 配置文件 ($SMB_CONF)"
-    fi
-    echo "========================================================"
-    echo ""
-}
-
-# 安装流程汇总
-function do_install {
-    local input_base_dir="$1"
-    local input_user="$2"
-    local input_pass="$3"
-
-    echo ""
-    echo "========================================================"
-    echo "      Samba 独立存储隔离服务部署向导 (iStoreOS 架构)    "
-    echo "========================================================"
-    echo ""
-
-    if [ -n "$input_base_dir" ]; then
-        BASE_DIR="$input_base_dir"
-    else
-        read -r -p "请输入共享根目录 [默认: /data/share, 回车确认]: " BASE_DIR
-        BASE_DIR="${BASE_DIR:-/data/share}"
-    fi
-
-    if [ -n "$input_user" ]; then
-        SMB_USER="$input_user"
-    else
-        read -r -p "请输入初始专属用户账号 [默认: $ORIGINAL_USER]: " SMB_USER
-        SMB_USER="${SMB_USER:-$ORIGINAL_USER}"
-    fi
-
-    if [ -n "$input_pass" ]; then
-        SMB_PASS="$input_pass"
-    else
-        while true; do
-            read -r -s -p "请输入用户 [$SMB_USER] 的 Samba 访问密码: " SMB_PASS
-            echo ""
-            if [ -z "$SMB_PASS" ]; then
-                echo "密码不能为空，请重新输入！"
-                continue
-            fi
-            read -r -s -p "请再次确认密码: " SMB_PASS_CONFIRM
-            echo ""
-            if [ "$SMB_PASS" != "$SMB_PASS_CONFIRM" ]; then
-                echo "两次输入的密码不一致，请重新输入！"
-            else
-                break
-            fi
-        done
-    fi
-
-    log info "配置参数确认:"
-    log info "  共享根目录: $BASE_DIR"
-    log info "  初始用户:   $SMB_USER (专属物理存储: ${BASE_DIR}/${SMB_USER})"
-
-    # 1. 安装软件包
-    install_packages
-    
-    # 2. 生成全新全局基础配置 (写入 Apple 兼容及性能参数)
-    init_smb_global_conf
-    
-    # 3. 注册初始用户专属磁盘块 [用户名] (对应 /data/share/<用户名>)
-    add_user_to_samba "$SMB_USER" "$SMB_PASS" "$BASE_DIR"
-    
-    # 4. 配置 SELinux 与防火墙
-    configure_selinux "$BASE_DIR"
-    configure_firewall
-    
-    # 5. 配置 Bonjour (Avahi) 网络广播 (让 Mac 侧边栏自动发现并支持推出)
-    configure_avahi
-    
-    # 6. 注册并启动系统服务
-    register_service
+# 打印多端挂载连接指南
+function print_mount_guide {
+    local target_user="${1:-<用户名>}"
     get_local_ip
 
-    local s_mgr
-    s_mgr="$(detect_service_manager)"
-
     echo ""
-    echo -e "\033[32m========================================================\033[0m"
-    echo -e "\033[32m       Samba 专属独立存储隔离服务部署成功！             \033[0m"
-    echo -e "\033[32m========================================================\033[0m"
-    echo -e "服务器内网 IP:     \033[36m$LOCAL_IP\033[0m"
-    echo -e "用户专属磁盘名:    \033[36m$SMB_USER\033[0m"
-    echo -e "对应物理存储目录:  \033[36m${BASE_DIR}/${SMB_USER}\033[0m"
-    if [ "$s_mgr" = "systemd" ]; then
-        echo -e "服务托管模式:      \033[36msystemd (systemctl status samba)\033[0m"
-    else
-        echo -e "服务托管模式:      \033[36mSysVinit (service samba status)\033[0m"
-    fi
-    echo "--------------------------------------------------------"
-    echo "📁 客户端连接方式:"
-    echo -e " 1. \033[33mmacOS 访达 (Cmd + K)\033[0m:"
-    echo -e "    输入地址: \033[32msmb://${LOCAL_IP}/${SMB_USER}\033[0m"
-    echo "    (挂载后将在 Mac 侧边栏显示独立磁盘卷，并自带 ⏏ 推出按钮)"
+    echo -e "\033[36m==============================================================================\033[0m"
+    echo -e "\033[32m  🎉 全平台客户端连接与挂载指南 (服务器 IP: ${LOCAL_IP} | 专属用户: ${target_user})\033[0m"
+    echo -e "\033[36m==============================================================================\033[0m"
+    echo -e "\033[33m🍏 1. macOS 访达 (Finder) 挂载:\033[0m"
+    echo -e "   • 打开访达，按快捷键 \033[32m⌘ + K\033[0m (或顶部菜单: 前往 ➔ 连接服务器)"
+    echo -e "   • 服务器地址输入: \033[36msmb://${LOCAL_IP}/${target_user}\033[0m"
+    echo -e "   • 选择「注册用户」，输入用户名 \033[32m${target_user}\033[0m 和对应密码即可。"
+    echo -e "   • \033[35m(已配置 Bonjour/Avahi，访达侧边栏'网络/位置'亦可直接双击服务器发现并推出)\033[0m"
     echo ""
-    echo -e " 2. \033[33mWindows 运行 (Win + R)\033[0m:"
-    echo -e "    输入地址: \033[32m\\\\${LOCAL_IP}\\${SMB_USER}\033[0m"
-    echo "--------------------------------------------------------"
-    echo "👥 添加更多独立隔离用户 (如 zsc):"
-    echo "    执行: sudo ./samba_install.sh adduser <新用户名> <密码>"
-    echo "    (系统将自动创建 ${BASE_DIR}/<新用户名> 并注册独立磁盘块)"
-    echo "========================================================"
+    echo -e "\033[33m🪟 2. Windows 资源管理器挂载:\033[0m"
+    echo -e "   • 打开文件资源管理器地址栏 (或按 \033[32mWin + R\033[0m)，输入: \033[36m\\\\${LOCAL_IP}\\${target_user}\033[0m"
+    echo -e "   • 映射为本地网络驱动器 (命令行执行):"
+    echo -e "     \033[32mnet use Z: \\\\${LOCAL_IP}\\${target_user} /user:${target_user} <密码> /persistent:yes\033[0m"
+    echo ""
+    echo -e "\033[33m🐧 3. Linux 系统客户端挂载 (CIFS):\033[0m"
+    echo -e "   • 临时挂载命令:"
+    echo -e "     \033[32msudo mkdir -p /mnt/samba_${target_user}\033[0m"
+    echo -e "     \033[32msudo mount -t cifs //${LOCAL_IP}/${target_user} /mnt/samba_${target_user} -o username=${target_user},password=<密码>,uid=\$(id -u),gid=\$(id -g),iocharset=utf8\033[0m"
+    echo -e "   • 开机自动挂载 (/etc/fstab 追加):"
+    echo -e "     \033[32m//${LOCAL_IP}/${target_user}  /mnt/samba_${target_user}  cifs  username=${target_user},password=<密码>,uid=\$(id -u),gid=\$(id -g),iocharset=utf8,_netdev  0  0\033[0m"
+    echo -e "\033[36m==============================================================================\033[0m"
     echo ""
 }
 
-# 卸载流程
-function do_uninstall {
-    echo ""
-    echo "========================================================"
-    echo "                 Samba 卸载向导                         "
-    echo "========================================================"
-    echo ""
+# 完整安装流程
+function do_install {
+    local base_dir="${1:-$DEFAULT_BASE_DIR}"
+    local init_user="${2:-}"
+    local init_pass="${3:-}"
 
-    read -r -p "确定要彻底卸载 Samba 吗？此操作将注销系统服务并删除安装包 (y/N): " confirm_uninstall
-    if [[ ! "$confirm_uninstall" =~ ^[Yy]$ ]]; then
-        log info "用户取消卸载操作。"
-        exit 0
+    log info "开始自动化部署 Samba 文件服务器..."
+    log info "设置共享根基目录为: $base_dir"
+
+    install_packages
+    configure_avahi
+    init_smb_global_conf
+    configure_firewall
+    configure_selinux "$base_dir"
+    register_service
+    service_control start
+
+    if [ -n "$init_user" ] && [ -n "$init_pass" ]; then
+        add_user_to_samba "$init_user" "$init_pass" "$base_dir"
+        print_mount_guide "$init_user"
+    else
+        log info "未指定初始用户，您可以随时执行 '$0 adduser <用户名> <密码>' 创建专属隔离空间。"
+        print_mount_guide
     fi
 
-    unregister_service
+    log info "✅ Samba 服务端自动化安装与配置全部完成！"
+}
 
-    log info "正在卸载 Samba 软件包..."
+# 添加用户流程
+function do_adduser {
+    local u="$1"
+    local p="$2"
+    local d="${3:-$(get_base_share_dir)}"
+
+    if [ -z "$u" ] || [ -z "$p" ]; then
+        echo -n "请输入要创建的隔离用户名: "
+        read -r u
+        echo -n "请输入该用户的访问密码: "
+        read -r p
+    fi
+
+    [ -z "$u" ] || [ -z "$p" ] && log error "用户名或密码不能为空！"
+
+    add_user_to_samba "$u" "$p" "$d"
+    print_mount_guide "$u"
+}
+
+# 删除用户流程
+function do_deluser {
+    local u="$1"
+    if [ -z "$u" ]; then
+        echo -n "请输入要删除的用户名: "
+        read -r u
+    fi
+    [ -z "$u" ] && log error "用户名不能为空！"
+    remove_user_from_samba "$u"
+}
+
+# 修改密码流程
+function do_passwd {
+    local u="$1"
+    local p="$2"
+    if [ -z "$u" ] || [ -z "$p" ]; then
+        echo -n "请输入要修改密码的用户名: "
+        read -r u
+        echo -n "请输入新密码: "
+        read -r p
+    fi
+    [ -z "$u" ] || [ -z "$p" ] && log error "用户名或密码不能为空！"
+    set_user_password "$u" "$p"
+}
+
+# 彻底卸载流程
+function do_uninstall {
+    log warn "正在执行 Samba 服务彻底卸载..."
+    service_control stop || true
+    unregister_service || true
+
+    log info "清理配置文件与 Avahi 广播..."
+    rm -f "$AVAHI_CONF"
+    if [ -f "$SMB_CONF" ]; then
+        mv "$SMB_CONF" "/etc/samba/smb.conf.bak.$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
+    fi
+
+    log info "卸载 Samba 软件包..."
     case "$OS_FAMILY" in
         debian)
-            apt-get purge -y samba samba-common samba-common-bin smbclient || apt-get remove -y samba samba-common
-            apt-get autoremove -y
+            apt-get remove --purge -y samba samba-common-bin smbclient >> "$logfile" 2>&1 || true
+            apt-get autoremove -y >> "$logfile" 2>&1 || true
             ;;
         redhat)
-            if command -v dnf >/dev/null 2>&1; then
-                dnf remove -y samba samba-common samba-client
-            else
-                yum remove -y samba samba-common samba-client
-            fi
+            $PKG_MGR remove -y samba samba-common samba-client >> "$logfile" 2>&1 || true
+            ;;
+        arch)
+            pacman -Rns --noconfirm samba >> "$logfile" 2>&1 || true
+            ;;
+        alpine)
+            apk del samba samba-common-tools >> "$logfile" 2>&1 || true
             ;;
     esac
 
-    read -r -p "是否清理 Samba 配置文件目录 (/etc/samba)? [y/N]: " clean_conf
-    if [[ "$clean_conf" =~ ^[Yy]$ ]]; then
-        rm -rf /etc/samba
-        rm -f /etc/avahi/services/samba.service 2>/dev/null || true
-        log info "已清理 /etc/samba 及 Bonjour 服务配置。"
-    else
-        log info "保留配置文件于 /etc/samba。"
-    fi
-
-    log info "注意: 用户的实际数据存储目录未被删除以防数据丢失。"
-    log info "Samba 服务注销与卸载完成！"
-}
-
-# 添加新用户
-function do_adduser {
-    local new_user="$1"
-    local new_pass="$2"
     local base_dir
     base_dir="$(get_base_share_dir)"
-
-    if [ -z "$new_user" ]; then
-        read -r -p "请输入要添加的 Samba 用户名: " new_user
+    log info "Samba 软件包与服务已成功卸载。"
+    if [ -d "$base_dir" ]; then
+        log warn "用户数据目录保留未动: $base_dir"
     fi
-
-    if [ -z "$new_pass" ]; then
-        while true; do
-            read -r -s -p "请输入 [$new_user] 的密码: " new_pass
-            echo ""
-            if [ -z "$new_pass" ]; then
-                echo "密码不能为空！"
-                continue
-            fi
-            read -r -s -p "请再次确认密码: " new_pass_confirm
-            echo ""
-            if [ "$new_pass" != "$new_pass_confirm" ]; then
-                echo "两次密码不一致，请重试！"
-            else
-                break
-            fi
-        done
-    fi
-
-    add_user_to_samba "$new_user" "$new_pass" "$base_dir"
 }
 
-# 删除用户
-function do_deluser {
-    local del_user="$1"
-    if [ -z "$del_user" ]; then
-        read -r -p "请输入要删除的 Samba 用户名: " del_user
-    fi
-    remove_user_from_samba "$del_user"
-}
-
-# 主菜单入口
+# 交互式菜单
 function main_menu {
     while true; do
+        get_local_ip
+        local base_dir
+        base_dir="$(get_base_share_dir)"
+
         echo ""
-        echo "========================================================"
-        echo "       Samba 独立存储与服务一键管理 (iStoreOS 架构)     "
-        echo "========================================================"
-        echo " 1. 安装并配置 Samba 服务 (带用户独立专属存储)"
-        echo " 2. 单独注册系统服务并开启自启 (Service Register)"
-        echo " 3. 注销系统服务 (Service Unregister)"
-        echo " 4. 查看 Samba 运行状态 (Status)"
-        echo " 5. 启动服务 (Start)"
-        echo " 6. 停止服务 (Stop)"
-        echo " 7. 重启服务 (Restart)"
-        echo " 8. 添加新专属用户 (自动在 /data/share/<用户> 创建并隔离)"
-        echo " 9. 查看所有已注册磁盘与用户 (List Users)"
-        echo " 10. 删除用户与专属磁盘 (Delete User)"
-        echo " 11. 完全卸载 Samba (Uninstall)"
-        echo " 0. 退出 (Exit)"
-        echo "========================================================"
-        read -r -p "请输入选项 [0-11]: " choice
+        echo -e "\033[36m==============================================================================\033[0m"
+        echo -e "\033[32m        Samba 多用户隔离共享管理面板 (IP: ${LOCAL_IP})\033[0m"
+        echo -e "\033[36m==============================================================================\033[0m"
+        echo -e "  \033[33m1)\033[0m 安装并初始化 Samba (默认根目录: ${DEFAULT_BASE_DIR})"
+        echo -e "  \033[33m2)\033[0m 添加专属隔离用户 (自动分配 /personal/samba/<用户名>)"
+        echo -e "  \033[33m3)\033[0m 修改用户密码"
+        echo -e "  \033[33m4)\033[0m 查看所有已配置用户"
+        echo -e "  \033[33m5)\033[0m 删除用户权限"
+        echo -e "  \033[33m6)\033[0m 服务状态与启停管理"
+        echo -e "  \033[33m7)\033[0m 查看全平台挂载指南 (macOS / Windows / Linux)"
+        echo -e "  \033[33m8)\033[0m 彻底卸载 Samba 服务"
+        echo -e "  \033[33m0)\033[0m 退出"
+        echo -e "\033[36m==============================================================================\033[0m"
+        echo -n "请输入操作选项 [0-8]: "
+        read -r choice
 
         case "$choice" in
             1)
-                do_install
+                echo -n "请输入共享根目录 [回车默认 ${DEFAULT_BASE_DIR}]: "
+                read -r input_dir
+                input_dir="${input_dir:-$DEFAULT_BASE_DIR}"
+                echo -n "请输入初始用户名 (可留空跳过): "
+                read -r init_u
+                init_p=""
+                if [ -n "$init_u" ]; then
+                    echo -n "请输入初始用户密码: "
+                    read -r init_p
+                fi
+                do_install "$input_dir" "$init_u" "$init_p"
                 ;;
             2)
-                register_service
+                do_adduser "" ""
                 ;;
             3)
-                unregister_service
+                do_passwd "" ""
                 ;;
             4)
-                service_control status
+                list_samba_users
                 ;;
             5)
-                service_control start
+                do_deluser ""
                 ;;
             6)
-                service_control stop
+                echo "  a) 启动服务   b) 停止服务   c) 重启服务   d) 查看状态"
+                echo -n "  请选择服务操作 [a-d]: "
+                read -r s_opt
+                case "$s_opt" in
+                    a|start)   service_control start ;;
+                    b|stop)    service_control stop ;;
+                    c|restart) service_control restart ;;
+                    d|status|*) service_control status ;;
+                esac
                 ;;
             7)
-                service_control restart
+                echo -n "请输入要查询指南的用户名 [回车默认显示通用]: "
+                read -r q_user
+                print_mount_guide "$q_user"
                 ;;
             8)
-                do_adduser
-                ;;
-            9)
-                do_lsusers
-                ;;
-            10)
-                do_deluser
-                ;;
-            11)
-                do_uninstall
+                echo -n "确认要彻底卸载 Samba 吗? [y/N]: "
+                read -r confirm
+                if [[ "$confirm" =~ ^[Yy]$ ]]; then
+                    do_uninstall
+                else
+                    log info "取消卸载。"
+                fi
                 ;;
             0)
-                echo "已退出。"
+                log info "退出程序。"
                 exit 0
                 ;;
             *)
-                echo "无效输入，请输入 0-11。"
+                log warn "无效输入，请重新选择。"
                 ;;
         esac
     done
@@ -1014,25 +922,33 @@ case "$ACTION" in
         service_control restart
         ;;
     adduser|add-user)
-        do_adduser "$2" "$3"
+        do_adduser "$2" "$3" "$4"
+        ;;
+    lsusers|ls-users|users|listusers)
+        list_samba_users
         ;;
     deluser|del-user)
         do_deluser "$2"
         ;;
-    lsusers|users)
-        do_lsusers
+    passwd|setpasswd)
+        do_passwd "$2" "$3"
+        ;;
+    guide|mount)
+        print_mount_guide "$2"
         ;;
     help|-h|--help)
         echo "用法:"
-        echo "  sudo $0                                   # 交互式菜单"
-        echo "  sudo $0 install [共享根目录] [用户] [密码]  # 一键安装"
-        echo "  sudo $0 adduser [新用户名] [密码]           # 添加新隔离用户"
-        echo "  sudo $0 lsusers                           # 查看所有用户磁盘"
-        echo "  sudo $0 deluser [用户名]                   # 删除用户与磁盘"
-        echo "  sudo $0 start|stop|restart|status         # 服务启停状态"
-        echo "  sudo $0 service register                  # 仅注册系统服务"
-        echo "  sudo $0 service unregister                # 注销系统服务"
-        echo "  sudo $0 uninstall                         # 卸载 Samba"
+        echo "  sudo $0                                            # 交互式菜单"
+        echo "  sudo $0 install [根目录] [用户名] [密码]             # 一键完整安装部署"
+        echo "  sudo $0 adduser [用户名] [密码] [根目录]             # 添加多用户隔离空间"
+        echo "  sudo $0 lsusers                                    # 查看所有已配置用户"
+        echo "  sudo $0 passwd [用户名] [新密码]                     # 修改用户密码"
+        echo "  sudo $0 deluser [用户名]                            # 删除用户权限"
+        echo "  sudo $0 guide [用户名]                              # 查看全平台客户端挂载指南"
+        echo "  sudo $0 service register                           # 注册系统服务与开机自启"
+        echo "  sudo $0 service unregister                         # 注销系统服务"
+        echo "  sudo $0 start|stop|restart|status                  # 服务启停状态管理"
+        echo "  sudo $0 uninstall                                  # 彻底卸载 Samba 服务"
         ;;
     "")
         main_menu
