@@ -34,7 +34,9 @@ logfile="${SCRIPT_ROOT}/filebrowser_install.log"
 
 INSTALL_BIN="/usr/local/bin/filebrowser"
 CONFIG_DIR="/etc/filebrowser"
-DB_FILE="${CONFIG_DIR}/filebrowser.db"
+DEFAULT_DB_FILE="${CONFIG_DIR}/filebrowser.db"
+ENV_FILE="${CONFIG_DIR}/filebrowser.env"
+DB_FILE="${FILEBROWSER_DB:-$DEFAULT_DB_FILE}"
 LOG_PATH="/var/log/filebrowser.log"
 PID_FILE="/var/run/filebrowser.pid"
 
@@ -44,6 +46,33 @@ SYSVINIT_FILE="/etc/init.d/${UNIFIED_SERVICE_NAME}"
 
 # 默认版本
 DEFAULT_VERSION="v2.63.23"
+
+# 加载已持久化的运行时环境配置
+function load_runtime_config {
+    if [ -f "$ENV_FILE" ]; then
+        # shellcheck disable=SC1090
+        . "$ENV_FILE" 2>/dev/null || true
+    fi
+    DB_FILE="${FILEBROWSER_DB:-${DB_FILE:-$DEFAULT_DB_FILE}}"
+}
+
+# 保存持久化运行时环境配置
+function save_runtime_config {
+    local root_dir="$1"
+    local port="$2"
+    local db_path="$3"
+
+    mkdir -p "$CONFIG_DIR"
+    mkdir -p "$(dirname "$db_path")"
+    cat << EOF > "$ENV_FILE"
+# FileBrowser 运行时环境配置 (自动生成与维护)
+FILEBROWSER_ROOT="${root_dir}"
+FILEBROWSER_PORT="${port}"
+FILEBROWSER_DB="${db_path}"
+FILEBROWSER_LOG="${LOG_PATH}"
+EOF
+    chmod 600 "$ENV_FILE" 2>/dev/null || true
+}
 
 # 日志函数，记录操作并格式化输出
 function log {
@@ -328,7 +357,12 @@ function init_filebrowser_config {
     local root_dir="$1"
     local port="$2"
     local admin_pass="$3"
+    local db_path="${4:-$DB_FILE}"
 
+    DB_FILE="$db_path"
+    local db_dir
+    db_dir="$(dirname "$DB_FILE")"
+    mkdir -p "$db_dir"
     mkdir -p "$CONFIG_DIR"
     mkdir -p "$root_dir"
     chmod -R 0777 "$root_dir" 2>/dev/null || true
@@ -339,7 +373,9 @@ function init_filebrowser_config {
         "$INSTALL_BIN" config init -d "$DB_FILE" >> "$logfile" 2>&1
     fi
 
+    # 解除最小密码长度限制并初始化系统配置
     "$INSTALL_BIN" config set -d "$DB_FILE" \
+        --minimumPasswordLength 1 \
         --address "0.0.0.0" \
         --port "$port" \
         --root "$root_dir" \
@@ -348,12 +384,36 @@ function init_filebrowser_config {
         --branding.name "云端文件管理器" >> "$logfile" 2>&1
 
     log info "正在配置默认管理员账户 (admin)..."
-    if "$INSTALL_BIN" users ls -d "$DB_FILE" 2>/dev/null | grep -qw "admin"; then
-        "$INSTALL_BIN" users update admin -p "$admin_pass" --perm.admin=true --scope "." -d "$DB_FILE" >> "$logfile" 2>&1
-    else
-        "$INSTALL_BIN" users add admin "$admin_pass" --perm.admin=true --scope "." -d "$DB_FILE" >> "$logfile" 2>&1
-    fi
 
+    local set_pwd_success=false
+    local curr_pass="$admin_pass"
+
+    while [ "$set_pwd_success" = false ]; do
+        local err_output
+        if "$INSTALL_BIN" users ls -d "$DB_FILE" 2>/dev/null | grep -qw "admin"; then
+            err_output=$("$INSTALL_BIN" users update admin -p "$curr_pass" --perm.admin=true --scope "." -d "$DB_FILE" 2>&1 || true)
+        else
+            err_output=$("$INSTALL_BIN" users add admin "$curr_pass" --perm.admin=true --scope "." -d "$DB_FILE" 2>&1 || true)
+        fi
+
+        if [[ "$err_output" == *"Error:"* ]]; then
+            log warn "管理员密码设置未通过安全策略校验: ${err_output}"
+            log warn "提示: FileBrowser 拒绝常见弱口令 (如 admin/123456)，建议使用包含字母+数字或特殊字符的密码 (如 Admin@123456)。"
+            if [ -t 0 ]; then
+                read -r -s -p "请重新输入符合强度的管理员密码 [默认: Admin@123456]: " curr_pass
+                echo ""
+                curr_pass="${curr_pass:-Admin@123456}"
+                ADMIN_PASS="$curr_pass"
+            else
+                log error "密码被安全策略拦截且处于非交互模式，请指定更强密码！"
+            fi
+        else
+            set_pwd_success=true
+            ADMIN_PASS="$curr_pass"
+        fi
+    done
+
+    save_runtime_config "$root_dir" "$port" "$DB_FILE"
     log info "FileBrowser 基础配置与管理员账户配置完成。"
 }
 
@@ -377,62 +437,68 @@ function configure_firewall {
 # 生成 SysVinit 启动脚本
 function generate_sysvinit_script {
     mkdir -p /etc/init.d
-    cat << 'EOF' > "$SYSVINIT_FILE"
+    cat << EOF > "$SYSVINIT_FILE"
 #!/bin/sh
 ### BEGIN INIT INFO
 # Provides:          filebrowser
-# Required-Start:    $network $local_fs $remote_fs
-# Required-Stop:     $network $local_fs $remote_fs
+# Required-Start:    \$network \$local_fs \$remote_fs
+# Required-Stop:     \$network \$local_fs \$remote_fs
 # Default-Start:     2 3 4 5
 # Default-Stop:      0 1 6
 # Short-Description: FileBrowser Web File Manager Daemon
 # Description:       FileBrowser Service Managed by filebrowser_install.sh
 ### END INIT INFO
 
-BIN="/usr/local/bin/filebrowser"
-DB_FILE="/etc/filebrowser/filebrowser.db"
-PID_FILE="/var/run/filebrowser.pid"
-LOG_FILE="/var/log/filebrowser.log"
+BIN="${INSTALL_BIN}"
+ENV_FILE="${ENV_FILE}"
+DEFAULT_DB="${DB_FILE}"
+PID_FILE="${PID_FILE}"
+LOG_FILE="${LOG_PATH}"
+
+if [ -f "\$ENV_FILE" ]; then
+    . "\$ENV_FILE" 2>/dev/null || true
+fi
+DB_FILE="\${FILEBROWSER_DB:-\$DEFAULT_DB}"
 
 start() {
-    if [ -f "$PID_FILE" ] && kill -0 $(cat "$PID_FILE") 2>/dev/null; then
-        echo "FileBrowser is already running (PID: $(cat "$PID_FILE"))."
+    if [ -f "\$PID_FILE" ] && kill -0 \$(cat "\$PID_FILE") 2>/dev/null; then
+        echo "FileBrowser is already running (PID: \$(cat "\$PID_FILE"))."
         return 0
     fi
-    echo "Starting FileBrowser..."
-    nohup "$BIN" -d "$DB_FILE" >> "$LOG_FILE" 2>&1 &
-    echo $! > "$PID_FILE"
+    echo "Starting FileBrowser with DB: \$DB_FILE ..."
+    nohup "\$BIN" -d "\$DB_FILE" >> "\$LOG_FILE" 2>&1 &
+    echo \$! > "\$PID_FILE"
     sleep 1
-    if [ -f "$PID_FILE" ] && kill -0 $(cat "$PID_FILE") 2>/dev/null; then
-        echo "FileBrowser started successfully (PID: $(cat "$PID_FILE"))."
+    if [ -f "\$PID_FILE" ] && kill -0 \$(cat "\$PID_FILE") 2>/dev/null; then
+        echo "FileBrowser started successfully (PID: \$(cat "\$PID_FILE"))."
     else
-        echo "Failed to start FileBrowser, check log: $LOG_FILE"
+        echo "Failed to start FileBrowser, check log: \$LOG_FILE"
         return 1
     fi
 }
 
 stop() {
-    if [ -f "$PID_FILE" ] && kill -0 $(cat "$PID_FILE") 2>/dev/null; then
-        local pid=$(cat "$PID_FILE")
-        echo "Stopping FileBrowser (PID: $pid)..."
-        kill "$pid" 2>/dev/null || true
+    if [ -f "\$PID_FILE" ] && kill -0 \$(cat "\$PID_FILE") 2>/dev/null; then
+        local pid=\$(cat "\$PID_FILE")
+        echo "Stopping FileBrowser (PID: \$pid)..."
+        kill "\$pid" 2>/dev/null || true
         sleep 1
-        kill -9 "$pid" 2>/dev/null || true
-        rm -f "$PID_FILE"
+        kill -9 "\$pid" 2>/dev/null || true
+        rm -f "\$PID_FILE"
         echo "FileBrowser stopped."
     else
         killall filebrowser 2>/dev/null || true
-        rm -f "$PID_FILE"
+        rm -f "\$PID_FILE"
         echo "FileBrowser is not running."
     fi
 }
 
 status() {
-    if [ -f "$PID_FILE" ] && kill -0 $(cat "$PID_FILE") 2>/dev/null; then
-        echo "🟢 FileBrowser is running (PID: $(cat "$PID_FILE"))"
+    if [ -f "\$PID_FILE" ] && kill -0 \$(cat "\$PID_FILE") 2>/dev/null; then
+        echo "🟢 FileBrowser is running (PID: \$(cat "\$PID_FILE"))"
         return 0
     elif pgrep -x filebrowser >/dev/null 2>&1; then
-        echo "🟢 FileBrowser is running (PID: $(pgrep filebrowser | tr '\n' ' '))"
+        echo "🟢 FileBrowser is running (PID: \$(pgrep filebrowser | tr '\n' ' '))"
         return 0
     else
         echo "🔴 FileBrowser is stopped."
@@ -440,7 +506,7 @@ status() {
     fi
 }
 
-case "$1" in
+case "\$1" in
     start)   start ;;
     stop)    stop ;;
     restart) stop; sleep 1; start ;;
@@ -457,7 +523,8 @@ EOF
 
 # 注册系统服务
 function register_service {
-    log info "开始注册 FileBrowser 系统服务..."
+    load_runtime_config
+    log info "开始注册 FileBrowser 系统服务 (DB: $DB_FILE)..."
     local s_mgr
     s_mgr="$(detect_service_manager)"
 
@@ -475,6 +542,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+EnvironmentFile=-${ENV_FILE}
 ExecStart=${INSTALL_BIN} -d ${DB_FILE}
 Restart=always
 RestartSec=3s
@@ -629,36 +697,20 @@ function service_control {
 }
 
 # 添加多用户 (Scope 隔离)
+# 添加多用户 (Scope 隔离)
 function do_adduser {
+    load_runtime_config
     local username="$1"
     local password="$2"
     local user_scope="$3"
 
     if [ ! -f "$INSTALL_BIN" ] || [ ! -f "$DB_FILE" ]; then
-        log warn "未检测到已安装的 FileBrowser，请先运行选项 1 完成初次安装！"
+        log warn "未检测到已安装的 FileBrowser 数据库 ($DB_FILE)，请先运行选项 1 完成初次安装！"
         return 0
     fi
 
     if [ -z "$username" ]; then
         read -r -p "请输入要创建的用户名: " username
-    fi
-
-    if [ -z "$password" ]; then
-        while true; do
-            read -r -s -p "请输入 [$username] 的登录密码: " password
-            echo ""
-            if [ -z "$password" ]; then
-                echo "密码不能为空！"
-                continue
-            fi
-            read -r -s -p "请再次确认密码: " password_confirm
-            echo ""
-            if [ "$password" != "$password_confirm" ]; then
-                echo "两次输入的密码不一致，请重试！"
-            else
-                break
-            fi
-        done
     fi
 
     if [ -z "$user_scope" ]; then
@@ -672,36 +724,74 @@ function do_adduser {
         log info "已自动创建用户隔离物理目录: $user_scope"
     fi
 
-    if "$INSTALL_BIN" users ls -d "$DB_FILE" 2>/dev/null | grep -qw "$username"; then
-        log warn "用户 [$username] 已存在，正在更新其密码与 Scope 隔离路径..."
-        "$INSTALL_BIN" users update "$username" \
-            --password "$password" \
-            --scope "$user_scope" \
-            --database "$DB_FILE" >> "$logfile" 2>&1
-    else
-        "$INSTALL_BIN" users add "$username" "$password" \
-            --scope "$user_scope" \
-            --locale "zh-cn" \
-            --perm.create=true \
-            --perm.delete=true \
-            --perm.download=true \
-            --perm.modify=true \
-            --perm.share=true \
-            --perm.admin=false \
-            --database "$DB_FILE" >> "$logfile" 2>&1
-    fi
+    local user_added=false
+    local curr_pass="$password"
 
-    log info "✅ 用户 [$username] 创建成功！"
+    while [ "$user_added" = false ]; do
+        if [ -z "$curr_pass" ]; then
+            while true; do
+                read -r -s -p "请输入 [$username] 的登录密码 [建议大小写字母+数字/特殊字符]: " curr_pass
+                echo ""
+                if [ -z "$curr_pass" ]; then
+                    echo "密码不能为空！"
+                    continue
+                fi
+                read -r -s -p "请再次确认密码: " password_confirm
+                echo ""
+                if [ "$curr_pass" != "$password_confirm" ]; then
+                    echo "两次输入的密码不一致，请重试！"
+                else
+                    break
+                fi
+            done
+        fi
+
+        local err_output
+        if "$INSTALL_BIN" users ls -d "$DB_FILE" 2>/dev/null | grep -qw "$username"; then
+            log warn "用户 [$username] 已存在，正在更新其密码与 Scope 隔离路径..."
+            err_output=$("$INSTALL_BIN" users update "$username" \
+                --password "$curr_pass" \
+                --scope "$user_scope" \
+                --database "$DB_FILE" 2>&1 || true)
+        else
+            err_output=$("$INSTALL_BIN" users add "$username" "$curr_pass" \
+                --scope "$user_scope" \
+                --locale "zh-cn" \
+                --perm.create=true \
+                --perm.delete=true \
+                --perm.download=true \
+                --perm.modify=true \
+                --perm.share=true \
+                --perm.admin=false \
+                --database "$DB_FILE" 2>&1 || true)
+        fi
+
+        if [[ "$err_output" == *"Error:"* ]]; then
+            log warn "创建/更新用户 [$username] 失败: $err_output"
+            log warn "提示: FileBrowser 密码策略拒绝弱口令，请包含大小写字母、数字或特殊字符。"
+            if [ -t 0 ]; then
+                curr_pass=""
+            else
+                log error "非交互模式下密码不符合策略，操作终止。"
+            fi
+        else
+            user_added=true
+        fi
+    done
+
+    log info "✅ 用户 [$username] 配置成功！"
     log info "   • 隔离目录 (Scope): $user_scope (用户登录 Web 后只能访问此目录)"
 }
 
 # 列出所有用户
 function do_lsusers {
+    load_runtime_config
     if [ ! -f "$DB_FILE" ]; then
         log error "数据库文件不存在 ($DB_FILE)，请先安装 FileBrowser！"
     fi
     echo "========================================================"
     echo "            FileBrowser 用户列表                        "
+    echo "            数据库: $DB_FILE                            "
     echo "========================================================"
     "$INSTALL_BIN" users ls -d "$DB_FILE"
     echo "========================================================"
@@ -709,6 +799,7 @@ function do_lsusers {
 
 # 删除用户
 function do_deluser {
+    load_runtime_config
     local username="$1"
     if [ ! -f "$DB_FILE" ]; then
         log error "数据库文件不存在 ($DB_FILE)，请先安装 FileBrowser！"
@@ -728,6 +819,7 @@ function do_deluser {
 
 # 重置密码
 function do_setpasswd {
+    load_runtime_config
     local target_user="${1:-admin}"
     local new_pass="$2"
 
@@ -735,30 +827,49 @@ function do_setpasswd {
         log error "数据库文件不存在 ($DB_FILE)，请先安装 FileBrowser！"
     fi
 
-    if [ -z "$new_pass" ]; then
-        while true; do
-            read -r -s -p "请输入用户 [$target_user] 的新密码: " new_pass
-            echo ""
-            if [ -z "$new_pass" ]; then
-                echo "密码不能为空！"
-                continue
-            fi
-            read -r -s -p "请再次确认新密码: " new_pass_confirm
-            echo ""
-            if [ "$new_pass" != "$new_pass_confirm" ]; then
-                echo "两次输入的密码不一致，请重试！"
-            else
-                break
-            fi
-        done
-    fi
+    local pwd_updated=false
+    local curr_pass="$new_pass"
 
-    "$INSTALL_BIN" users update "$target_user" -p "$new_pass" -d "$DB_FILE" >> "$logfile" 2>&1
+    while [ "$pwd_updated" = false ]; do
+        if [ -z "$curr_pass" ]; then
+            while true; do
+                read -r -s -p "请输入用户 [$target_user] 的新密码: " curr_pass
+                echo ""
+                if [ -z "$curr_pass" ]; then
+                    echo "密码不能为空！"
+                    continue
+                fi
+                read -r -s -p "请再次确认新密码: " new_pass_confirm
+                echo ""
+                if [ "$curr_pass" != "$new_pass_confirm" ]; then
+                    echo "两次输入的密码不一致，请重试！"
+                else
+                    break
+                fi
+            done
+        fi
+
+        local err_output
+        err_output=$("$INSTALL_BIN" users update "$target_user" -p "$curr_pass" -d "$DB_FILE" 2>&1 || true)
+        if [[ "$err_output" == *"Error:"* ]]; then
+            log warn "密码修改失败: $err_output"
+            log warn "提示: FileBrowser 密码策略拒绝弱口令，请包含大小写字母、数字或特殊字符。"
+            if [ -t 0 ]; then
+                curr_pass=""
+            else
+                log error "非交互模式下新密码不符合策略，操作终止。"
+            fi
+        else
+            pwd_updated=true
+        fi
+    done
+
     log info "用户 [$target_user] 密码修改成功！"
 }
 
 # 修改监听端口
 function do_setport {
+    load_runtime_config
     local new_port="$1"
 
     if [ ! -f "$DB_FILE" ]; then
@@ -774,6 +885,7 @@ function do_setport {
     fi
 
     "$INSTALL_BIN" config set -p "$new_port" -d "$DB_FILE" >> "$logfile" 2>&1
+    save_runtime_config "${ROOT_DIR:-/data}" "$new_port" "$DB_FILE"
     configure_firewall "$new_port"
     service_control restart
     log info "端口已修改为 $new_port 并已重启服务！"
@@ -781,9 +893,11 @@ function do_setport {
 
 # 安装流程汇总
 function do_install {
+    load_runtime_config
     local input_root_dir="$1"
     local input_port="$2"
     local input_admin_pass="$3"
+    local input_db_path="$4"
 
     echo ""
     echo "========================================================"
@@ -809,11 +923,11 @@ function do_install {
         ADMIN_PASS="$input_admin_pass"
     else
         while true; do
-            read -r -s -p "请输入管理员 (admin) 的登录密码 [默认: admin]: " ADMIN_PASS
+            read -r -s -p "请输入管理员 (admin) 的登录密码 [默认: Admin@123456]: " ADMIN_PASS
             echo ""
-            ADMIN_PASS="${ADMIN_PASS:-admin}"
-            if [ "$ADMIN_PASS" = "admin" ]; then
-                log warn "您使用了默认密码 'admin'，建议上线后在控制台及时修改！"
+            ADMIN_PASS="${ADMIN_PASS:-Admin@123456}"
+            if [ "$ADMIN_PASS" = "Admin@123456" ]; then
+                log warn "您使用了默认推荐密码 'Admin@123456'，上线后可在控制台按需修改！"
                 break
             fi
             read -r -s -p "请再次确认密码: " ADMIN_PASS_CONFIRM
@@ -826,14 +940,22 @@ function do_install {
         done
     fi
 
+    if [ -n "$input_db_path" ]; then
+        DB_FILE="$input_db_path"
+    else
+        read -r -p "请输入数据库存储路径 [默认: /etc/filebrowser/filebrowser.db, 回车确认]: " input_custom_db
+        DB_FILE="${input_custom_db:-/etc/filebrowser/filebrowser.db}"
+    fi
+
     log info "配置参数确认:"
     log info "  全局根目录: $ROOT_DIR (管理员可俯瞰全部，普通用户通过 Scope 隔离)"
     log info "  监听端口:   $PORT"
+    log info "  数据库路径: $DB_FILE"
     log info "  默认管理员: admin"
 
     install_dependencies
     download_filebrowser
-    init_filebrowser_config "$ROOT_DIR" "$PORT" "$ADMIN_PASS"
+    init_filebrowser_config "$ROOT_DIR" "$PORT" "$ADMIN_PASS" "$DB_FILE"
     configure_firewall "$PORT"
     register_service
     get_local_ip
@@ -849,6 +971,7 @@ function do_install {
     echo -e "超级管理员:    \033[36madmin\033[0m"
     echo -e "管理员密码:    \033[36m${ADMIN_PASS}\033[0m"
     echo -e "全局数据根目录:\033[36m${ROOT_DIR}\033[0m"
+    echo -e "数据库文件:    \033[36m${DB_FILE}\033[0m"
     if [ "$s_mgr" = "systemd" ]; then
         echo -e "服务托管模式:  \033[36msystemd (systemctl status filebrowser)\033[0m"
     else
@@ -864,6 +987,7 @@ function do_install {
 
 # 卸载流程
 function do_uninstall {
+    load_runtime_config
     echo ""
     echo "========================================================"
     echo "            FileBrowser 卸载向导                        "
@@ -881,13 +1005,14 @@ function do_uninstall {
     log info "正在删除二进制文件与配置..."
     rm -f "$INSTALL_BIN"
 
-    read -r -p "是否删除数据库与配置文件目录 (/etc/filebrowser)? [y/N]: " clean_conf
+    read -r -p "是否删除数据库文件 ($DB_FILE) 与配置目录 ($CONFIG_DIR)? [y/N]: " clean_conf
     if [[ "$clean_conf" =~ ^[Yy]$ ]]; then
         rm -rf "$CONFIG_DIR"
+        rm -f "$DB_FILE"
         rm -f "$LOG_PATH"
-        log info "已清理 /etc/filebrowser 及运行日志。"
+        log info "已清理数据库文件、/etc/filebrowser 及运行日志。"
     else
-        log info "已保留配置文件与数据库于 /etc/filebrowser。"
+        log info "已保留数据库文件与配置文件。"
     fi
 
     log info "注意: 您的实际文件数据目录未被删除以防数据丢失。"
@@ -896,6 +1021,7 @@ function do_uninstall {
 
 # 主菜单入口
 function main_menu {
+    load_runtime_config
     while true; do
         echo ""
         echo "========================================================"
@@ -975,12 +1101,13 @@ function main_menu {
 check_permission
 get_original_user
 detect_system
+load_runtime_config
 
 ACTION="${1:-}"
 
 case "$ACTION" in
     install|-i|--install)
-        do_install "$2" "$3" "$4"
+        do_install "$2" "$3" "$4" "$5"
         ;;
     uninstall|-u|--uninstall)
         do_uninstall
@@ -1027,17 +1154,17 @@ case "$ACTION" in
         ;;
     help|-h|--help)
         echo "用法:"
-        echo "  sudo $0                                            # 交互式菜单"
-        echo "  sudo $0 install [全局目录] [端口] [管理员密码]       # 完整安装与注册"
-        echo "  sudo $0 adduser [用户名] [密码] [隔离目录]           # 添加隔离用户"
-        echo "  sudo $0 lsusers                                    # 查看所有用户"
-        echo "  sudo $0 deluser [用户名]                            # 删除用户"
-        echo "  sudo $0 service register                           # 仅注册系统服务"
-        echo "  sudo $0 service unregister                         # 注销系统服务"
-        echo "  sudo $0 start|stop|restart|status                  # 服务启停状态"
-        echo "  sudo $0 setpasswd [用户名] [新密码]                  # 重置密码"
-        echo "  sudo $0 setport [新端口号]                          # 修改 Web 端口"
-        echo "  sudo $0 uninstall                                  # 卸载 FileBrowser"
+        echo "  sudo $0                                                 # 交互式菜单"
+        echo "  sudo $0 install [全局目录] [端口] [管理员密码] [DB路径]   # 完整安装与注册"
+        echo "  sudo $0 adduser [用户名] [密码] [隔离目录]                # 添加隔离用户"
+        echo "  sudo $0 lsusers                                         # 查看所有用户"
+        echo "  sudo $0 deluser [用户名]                                 # 删除用户"
+        echo "  sudo $0 service register                                # 仅注册系统服务"
+        echo "  sudo $0 service unregister                              # 注销系统服务"
+        echo "  sudo $0 start|stop|restart|status                       # 服务启停状态"
+        echo "  sudo $0 setpasswd [用户名] [新密码]                       # 重置密码"
+        echo "  sudo $0 setport [新端口号]                               # 修改 Web 端口"
+        echo "  sudo $0 uninstall                                       # 卸载 FileBrowser"
         ;;
     "")
         main_menu
