@@ -54,6 +54,8 @@ function load_runtime_config {
         . "$ENV_FILE" 2>/dev/null || true
     fi
     DB_FILE="${FILEBROWSER_DB:-${DB_FILE:-$DEFAULT_DB_FILE}}"
+    ROOT_DIR="${FILEBROWSER_ROOT:-${ROOT_DIR:-/data}}"
+    PORT="${FILEBROWSER_PORT:-${PORT:-8080}}"
 }
 
 # 保存持久化运行时环境配置
@@ -764,12 +766,56 @@ function resume_service_if_was_running {
     fi
 }
 
+# 智能解析用户隔离物理路径与 FileBrowser Scope 相对路径
+# 核心原理: FileBrowser 的 Scope 是基于全局 Root (如 /personal/samba) 的相对路径
+function resolve_user_scope_and_dir {
+    local username="$1"
+    local raw_input="$2"
+    local s_root="${FILEBROWSER_ROOT:-${ROOT_DIR:-/data}}"
+    s_root="${s_root%/}"
+
+    # 默认路径
+    if [ -z "$raw_input" ]; then
+        raw_input="${s_root}/${username}"
+    fi
+
+    # 去除末尾斜杠
+    raw_input="${raw_input%/}"
+
+    if [[ "$raw_input" == "$s_root"/* ]]; then
+        # 输入的是全局 Root 下的绝对路径 (如 /personal/samba/spz)
+        local rel_path="${raw_input#"$s_root"}"
+        rel_path="${rel_path#/}"
+        RESOLVED_SCOPE="/${rel_path}"
+        RESOLVED_DIR="${raw_input}"
+    elif [[ "$raw_input" == "$s_root" ]]; then
+        RESOLVED_SCOPE="/"
+        RESOLVED_DIR="${raw_input}"
+    elif [[ "$raw_input" == /* ]]; then
+        # 输入的是全局 Root 之外的独立物理路径 (如 /mnt/disk2/spz)
+        # 在全局根目录下自动创建软链接映射，以防无法访问且无需修改外部目录属性
+        local link_name="users_${username}"
+        local link_path="${s_root}/${link_name}"
+        if [ ! -e "$link_path" ] && [ ! -L "$link_path" ]; then
+            ln -s "$raw_input" "$link_path" 2>/dev/null || true
+            log info "已在全局根目录建立软链接映射: $link_path -> $raw_input"
+        fi
+        RESOLVED_SCOPE="/${link_name}"
+        RESOLVED_DIR="${raw_input}"
+    else
+        # 输入的是相对路径 (如 spz 或 users/spz)
+        local rel_path="${raw_input#/}"
+        RESOLVED_SCOPE="/${rel_path}"
+        RESOLVED_DIR="${s_root}/${rel_path}"
+    fi
+}
+
 # 添加多用户 (Scope 隔离)
 function do_adduser {
     load_runtime_config
     local username="$1"
     local password="$2"
-    local user_scope="$3"
+    local user_input_scope="$3"
 
     if [ ! -f "$INSTALL_BIN" ] || [ ! -f "$DB_FILE" ]; then
         log warn "未检测到已安装的 FileBrowser 数据库 ($DB_FILE)，请先运行选项 1 完成初次安装！"
@@ -780,15 +826,19 @@ function do_adduser {
         read -r -p "请输入要创建的用户名: " username
     fi
 
-    if [ -z "$user_scope" ]; then
-        read -r -p "请输入该用户的私有隔离目录 [默认: /data/users/${username}]: " user_scope
-        user_scope="${user_scope:-/data/users/${username}}"
+    local default_scope="${ROOT_DIR}/${username}"
+    if [ -z "$user_input_scope" ]; then
+        read -r -p "请输入该用户的私有隔离目录 [默认: ${default_scope}]: " user_input_scope
+        user_input_scope="${user_input_scope:-$default_scope}"
     fi
 
-    if [ ! -d "$user_scope" ]; then
-        mkdir -p "$user_scope"
-        chmod 0777 "$user_scope" 2>/dev/null || true
-        log info "已自动创建用户隔离物理目录: $user_scope"
+    resolve_user_scope_and_dir "$username" "$user_input_scope"
+
+    if [ ! -d "$RESOLVED_DIR" ]; then
+        mkdir -p "$RESOLVED_DIR"
+        log info "已自动创建用户隔离物理目录: $RESOLVED_DIR"
+    else
+        log info "检测到已有物理目录: $RESOLVED_DIR (保留原始文件属性与权限，兼容 Samba)"
     fi
 
     pause_service_if_running
@@ -821,11 +871,11 @@ function do_adduser {
             log warn "用户 [$username] 已存在，正在更新其密码与 Scope 隔离路径..."
             err_output=$("$INSTALL_BIN" users update "$username" \
                 --password "$curr_pass" \
-                --scope "$user_scope" \
+                --scope "$RESOLVED_SCOPE" \
                 --database "$DB_FILE" 2>&1 || true)
         else
             err_output=$("$INSTALL_BIN" users add "$username" "$curr_pass" \
-                --scope "$user_scope" \
+                --scope "$RESOLVED_SCOPE" \
                 --locale "zh-cn" \
                 --perm.create=true \
                 --perm.delete=true \
@@ -854,7 +904,8 @@ function do_adduser {
     done
 
     log info "✅ 用户 [$username] 配置成功！"
-    log info "   • 隔离目录 (Scope): $user_scope (用户登录 Web 后只能访问此目录)"
+    log info "   • 实际物理存储目录: $RESOLVED_DIR"
+    log info "   • FileBrowser Scope: $RESOLVED_SCOPE (登录后以此目录为根目录，隔离且完整可见该目录下文件)"
 }
 
 # 列出所有用户
