@@ -242,6 +242,65 @@ function setup_public_directory {
     fi
 }
 
+# 为用户注册独立的专属磁盘块 (Mac 原生识别为独立磁盘卷)
+function add_user_share_section {
+    local username="$1"
+    local user_base_dir="$2"
+    local smb_conf="/etc/samba/smb.conf"
+
+    if [ -f "$smb_conf" ]; then
+        if ! grep -q "^\[$username\]" "$smb_conf"; then
+            log info "为用户 [$username] 注册独立共享磁盘卷 [$username]..."
+            cat << EOF >> "$smb_conf"
+
+# ------------------------------------------------------------------------------
+# 👤 用户 [$username] 专属独立磁盘卷 (严格隔离，Mac 识别为原生网络驱动器)
+# ------------------------------------------------------------------------------
+[$username]
+    comment = $username 专属私有空间
+    path = ${user_base_dir}/$username
+    browseable = yes
+    writable = yes
+    read only = no
+    valid users = $username
+    create mask = 0700
+    directory mask = 0700
+    force create mode = 0700
+    force directory mode = 0700
+
+EOF
+            # 语法检测与重载
+            if command -v testparm >/dev/null 2>&1; then
+                testparm -s "$smb_conf" >/dev/null 2>&1 || true
+            fi
+            if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet smbd 2>/dev/null; then
+                systemctl reload smbd 2>/dev/null || systemctl restart smbd 2>/dev/null || true
+            elif command -v service >/dev/null 2>&1; then
+                service samba reload 2>/dev/null || service samba restart 2>/dev/null || true
+            fi
+        fi
+    fi
+}
+
+# 从 smb.conf 中注销用户共享块
+function remove_user_share_section {
+    local username="$1"
+    local smb_conf="/etc/samba/smb.conf"
+
+    if [ -f "$smb_conf" ] && grep -q "^\[$username\]" "$smb_conf"; then
+        log info "正在从 smb.conf 移除用户 [$username] 的专属共享块..."
+        # 移除用户专属段
+        sed -i "/^#.*$username.*专属独立磁盘卷/,/^\[$username\]/,/^$/d" "$smb_conf" 2>/dev/null || \
+        sed -i "/^\[$username\]/,/^$/d" "$smb_conf" 2>/dev/null || true
+        
+        if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet smbd 2>/dev/null; then
+            systemctl reload smbd 2>/dev/null || true
+        elif command -v service >/dev/null 2>&1; then
+            service samba reload 2>/dev/null || true
+        fi
+    fi
+}
+
 # 创建 Samba 账户并初始化其隔离存储空间
 function setup_samba_user {
     local smb_user="$1"
@@ -272,7 +331,10 @@ function setup_samba_user {
     # 4. 创建专属私有隔离目录
     setup_user_private_dir "$user_base_dir" "$smb_user"
 
-    log info "✅ Samba 用户 [$smb_user] 密码设置、启用及私有隔离空间创建成功！"
+    # 5. 注册独立磁盘卷至 smb.conf
+    add_user_share_section "$smb_user" "$user_base_dir"
+
+    log info "✅ Samba 用户 [$smb_user] 密码设置、启用及独立磁盘卷注册成功！"
 }
 
 # 写入 Samba 主配置文件 /etc/samba/smb.conf
@@ -306,7 +368,7 @@ function configure_smb_conf {
     map to guest = Bad User
     dns proxy = no
 
-    # 性能优化 & 协议支持 (针对 macOS 深度优化)
+    # macOS 原生挂载与推出核心支持
     min protocol = SMB2
     client min protocol = SMB2
     vfs objects = catia fruit streams_xattr
@@ -334,27 +396,7 @@ function configure_smb_conf {
 
 EOF
 
-    # 1. 写入用户独立私有空间共享段 (每个用户直接使用自己的用户名访问: \\IP\用户名 或 smb://IP/用户名)
-    cat << EOF >> "$smb_conf"
-# ------------------------------------------------------------------------------
-# 👤 用户独立私有隔离存储空间 (客户端直接连接 \\IP\用户名 或 smb://IP/用户名)
-# ------------------------------------------------------------------------------
-[homes]
-    comment = %S 的专属个人私有空间
-    path = ${user_base_dir}/%S
-    browseable = yes
-    writable = yes
-    read only = no
-    valid users = %S
-    create mask = 0700
-    directory mask = 0700
-    force create mode = 0700
-    force directory mode = 0700
-    root preexec = /bin/sh -c '/bin/mkdir -m 0700 -p ${user_base_dir}/%S && /bin/chown %S:%S ${user_base_dir}/%S'
-
-EOF
-
-    # 2. 写入公共共享区段 (如果指定了公共目录)
+    # 写入公共共享区段 (如果指定了公共目录)
     if [ -n "$public_dir" ]; then
         cat << EOF >> "$smb_conf"
 # ------------------------------------------------------------------------------
@@ -801,7 +843,7 @@ function do_uninstall {
 # 获取当前配置中的用户基目录
 function get_user_base_dir_from_conf {
     local dir
-    dir=$(grep -A 5 '\[homes\]' /etc/samba/smb.conf 2>/dev/null | grep 'path =' | head -n 1 | awk '{print $3}' | sed 's|/%S||')
+    dir=$(grep -m 1 'path =' /etc/samba/smb.conf 2>/dev/null | grep -v 'public' | awk '{print $3}' | sed -E 's|/[^/]+$||' || true)
     echo "${dir:-/data/users}"
 }
 
@@ -849,6 +891,7 @@ function do_deluser {
 
     log info "正在从 Samba 移除用户 [$del_user]..."
     smbpasswd -x "$del_user" >> "$logfile" 2>&1 || true
+    remove_user_share_section "$del_user"
 
     read -r -p "是否同时删除该用户的私有存储数据 (${user_base_dir}/${del_user})? [y/N]: " del_data
     if [[ "$del_data" =~ ^[Yy]$ ]]; then
