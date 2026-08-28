@@ -144,13 +144,13 @@ function get_local_ip {
 
 # 安装依赖与 Samba 软件包
 function install_packages {
-    log info "开始安装 Samba 相关软件包..."
+    log info "开始安装 Samba 及网络广播相关软件包..."
 
     case "$OS_FAMILY" in
         debian)
             export DEBIAN_FRONTEND=noninteractive
             apt-get update -y
-            apt-get install -y samba samba-common-bin smbclient procps
+            apt-get install -y samba samba-common-bin smbclient procps avahi-daemon
             ;;
         redhat)
             if command -v dnf >/dev/null 2>&1; then
@@ -159,13 +159,56 @@ function install_packages {
                 PKG_MGR="yum"
             fi
             $PKG_MGR makecache -y || true
-            $PKG_MGR install -y samba samba-common samba-client procps-ng policycoreutils-python-utils || \
-            $PKG_MGR install -y samba samba-common samba-client procps-ng policycoreutils-python || \
+            $PKG_MGR install -y samba samba-common samba-client procps-ng avahi policycoreutils-python-utils || \
+            $PKG_MGR install -y samba samba-common samba-client procps-ng avahi policycoreutils-python || \
+            $PKG_MGR install -y samba samba-common samba-client procps-ng avahi || \
             $PKG_MGR install -y samba samba-common samba-client procps-ng
             ;;
     esac
 
-    log info "Samba 软件包安装完成。"
+    log info "Samba 与 Bonjour 广播软件包安装完成。"
+}
+
+# 配置 macOS Bonjour (mDNS / Avahi) 网络广播 (让 Mac 侧边栏自动发现服务器并支持推出)
+function configure_avahi {
+    log info "正在配置 macOS Bonjour (mDNS / Avahi) 网络广播服务..."
+
+    mkdir -p /etc/avahi/services
+    cat << 'EOF' > /etc/avahi/services/samba.service
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<service-group>
+  <name replace-wildcards="yes">%h (Samba)</name>
+  <service>
+    <type>_smb._tcp</type>
+    <port>445</port>
+  </service>
+  <service>
+    <type>_device-info._tcp</type>
+    <port>0</port>
+    <txt-record>model=Macmini</txt-record>
+  </service>
+</service-group>
+EOF
+
+    # 启动并使能 avahi-daemon
+    if command -v systemctl >/dev/null 2>&1 && systemctl is-system-running >/dev/null 2>&1; then
+        systemctl restart avahi-daemon 2>/dev/null || true
+        systemctl enable avahi-daemon 2>/dev/null || true
+    elif command -v service >/dev/null 2>&1; then
+        service avahi-daemon restart 2>/dev/null || true
+    fi
+
+    # 防火墙放行 mDNS 端口 (UDP 5353)
+    if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+        firewall-cmd --permanent --add-service=mdns >/dev/null 2>&1 || firewall-cmd --permanent --add-port=5353/udp >/dev/null 2>&1 || true
+        firewall-cmd --reload >/dev/null 2>&1 || true
+    fi
+    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qw "active"; then
+        ufw allow 5353/udp >/dev/null 2>&1 || true
+    fi
+
+    log info "macOS Bonjour 广播服务配置完成 (Avahi 运行中)。"
 }
 
 # 配置防火墙规则
@@ -759,6 +802,7 @@ function do_install {
     setup_samba_user "$SMB_USER" "$SMB_PASS" "$USER_BASE_DIR"
     configure_selinux "$PUBLIC_DIR" "$USER_BASE_DIR"
     configure_firewall
+    configure_avahi
     register_service
     get_local_ip
 
