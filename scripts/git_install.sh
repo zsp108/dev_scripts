@@ -20,16 +20,16 @@ function log {
     {
     case $logtype in
         debug)
-            echo "${logformat}" &>> $logfile;;
+            echo "${logformat}" >> "$logfile" 2>&1;;
         info)
             echo -e "\033[32m $datetime [info] ${msg} \t \033[0m"
-            echo "${logformat}" &>> $logfile;;
+            echo "${logformat}" >> "$logfile" 2>&1;;
         warn)
             echo -e "\033[33m $datetime [WARN] ${msg} \t \033[0m"
-            echo "${logformat}" &>> $logfile;;
+            echo "${logformat}" >> "$logfile" 2>&1;;
         error)
             echo -e "\033[31m $datetime [ERROR] ${msg} \033[0m"
-            echo "${logformat}" &>> $logfile
+            echo "${logformat}" >> "$logfile" 2>&1
             exit 1;;
     esac
     }
@@ -47,14 +47,6 @@ else
     log info "检测到root用户执行，继续执行..."
 fi
 
-if [ -z "$1" ]; then
-  git_version="2.42.0"
-  log info "未指定版本，使用默认版本: $git_version"
-else
-  git_version="$1"
-  log info "使用指定版本: $git_version"
-fi
-
 # 获取原始用户信息（当使用sudo执行时）
 if [ -n "$SUDO_USER" ]; then
     ORIGINAL_USER="$SUDO_USER"
@@ -64,6 +56,69 @@ else
     ORIGINAL_USER="$USER"
     ORIGINAL_HOME="$HOME"
     log info "直接执行，当前用户: $ORIGINAL_USER, 当前家目录: $ORIGINAL_HOME"
+fi
+
+# 卸载 Git 函数
+function do_uninstall {
+    log info "开始卸载编译安装的 Git..."
+
+    if [ -d "/usr/local/git" ]; then
+        rm -rf /usr/local/git
+        log info "已删除 /usr/local/git"
+    fi
+
+    if [ -L "/usr/bin/git" ]; then
+        local link_target
+        link_target=$(readlink /usr/bin/git || true)
+        if [[ "$link_target" == *"/usr/local/git"* ]]; then
+            rm -f /usr/bin/git
+            log info "已删除 /usr/bin/git 软链接"
+        fi
+    fi
+
+    # 清理补全脚本
+    rm -f "$ORIGINAL_HOME/.git-completion.bash" "$HOME/.git-completion.bash"
+
+    # 清理 .bashrc 中的配置
+    cleanup_git_bashrc() {
+        local user_home="$1"
+        local user_bashrc="$user_home/.bashrc"
+        if [ -f "$user_bashrc" ] && grep -q "# Set PATH to include Git" "$user_bashrc"; then
+            sed -i.bak '/# Set PATH to include Git/,/fi/d' "$user_bashrc" 2>/dev/null || true
+            rm -f "$user_bashrc.bak"
+            log info "已清理 $user_bashrc 中的 Git 环境变量"
+        fi
+    }
+
+    cleanup_git_bashrc "$HOME"
+    if [ "$ORIGINAL_USER" != "$USER" ] && [ "$ORIGINAL_HOME" != "$HOME" ]; then
+        cleanup_git_bashrc "$ORIGINAL_HOME"
+    fi
+
+    log info "Git 卸载清理完成！请执行 'source ~/.bashrc'。"
+    exit 0
+}
+
+# 命令分发
+ACTION="${1:-}"
+case "$ACTION" in
+    uninstall|-u|--uninstall|remove)
+        do_uninstall
+        ;;
+    help|-h|--help)
+        echo "用法:"
+        echo "  sudo $0 [版本号]     # 编译安装指定版本 Git (默认: 2.42.0)"
+        echo "  sudo $0 uninstall    # 卸载编译安装的 Git 并清理环境变量"
+        exit 0
+        ;;
+esac
+
+if [ -z "$1" ]; then
+  git_version="2.42.0"
+  log info "未指定版本，使用默认版本: $git_version"
+else
+  git_version="$1"
+  log info "使用指定版本: $git_version"
 fi
 
 # 判断是否安装过git，如果有再确认是否卸载原安装的git

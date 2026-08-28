@@ -19,16 +19,16 @@ function log {
     {
     case $logtype in
         debug)
-            echo "${logformat}" &>> $logfile;;
+            echo "${logformat}" >> "$logfile" 2>&1;;
         info)
             echo -e "\033[32m $datetime [info] ${msg} \t \033[0m"
-            echo "${logformat}" &>> $logfile;;
+            echo "${logformat}" >> "$logfile" 2>&1;;
         warn)
             echo -e "\033[33m $datetime [WARN] ${msg} \t \033[0m"
-            echo "${logformat}" &>> $logfile;;
+            echo "${logformat}" >> "$logfile" 2>&1;;
         error)
             echo -e "\033[31m $datetime [ERROR] ${msg} \033[0m"
-            echo "${logformat}" &>> $logfile
+            echo "${logformat}" >> "$logfile" 2>&1
             exit 1;;
     esac
     }
@@ -46,6 +46,60 @@ else
     log info "检测到root用户执行，继续执行..."
 fi
 
+# 卸载 Go 及清理环境变量
+function do_uninstall {
+    local target_ver="${1:-}"
+    log info "开始卸载 Go 环境..."
+
+    if [ -n "$target_ver" ] && [ "$target_ver" != "all" ]; then
+        local ver_dir="$ORIGINAL_HOME/go/go$target_ver"
+        if [ -d "$ver_dir" ]; then
+            rm -rf "$ver_dir"
+            log info "已删除 Go 版本目录: $ver_dir"
+        else
+            log warn "未找到指定 Go 版本目录: $ver_dir"
+        fi
+    else
+        if [ -d "$ORIGINAL_HOME/go" ]; then
+            rm -rf "$ORIGINAL_HOME/go"
+            log info "已删除 Go 安装目录: $ORIGINAL_HOME/go"
+        fi
+    fi
+
+    # 清理 .bashrc 中的 Go 环境变量配置
+    cleanup_bashrc() {
+        local user_home="$1"
+        local user_bashrc="$user_home/.bashrc"
+        if [ -f "$user_bashrc" ] && grep -q "# Go envs" "$user_bashrc"; then
+            sed -i.bak '/# Go envs/,/export GOSUMDB=/d' "$user_bashrc" 2>/dev/null || true
+            rm -f "$user_bashrc.bak"
+            log info "已清理 $user_bashrc 中的 Go 环境变量配置"
+        fi
+    }
+
+    cleanup_bashrc "$HOME"
+    if [ "$ORIGINAL_USER" != "$USER" ] && [ "$ORIGINAL_HOME" != "$HOME" ]; then
+        cleanup_bashrc "$ORIGINAL_HOME"
+    fi
+
+    log info "Go 卸载完成！请执行 'source ~/.bashrc' 使环境变量生效。"
+    exit 0
+}
+
+# 命令分发
+ACTION="${1:-}"
+case "$ACTION" in
+    uninstall|-u|--uninstall|remove)
+        do_uninstall "$2"
+        ;;
+    help|-h|--help)
+        echo "用法:"
+        echo "  sudo $0 [版本号]              # 安装指定版本 Go (默认: 1.25.3)"
+        echo "  sudo $0 uninstall [版本号|all] # 卸载指定版本或全部 Go 环境"
+        exit 0
+        ;;
+esac
+
 if [ -z "$1" ]; then
   log warn "Usage: $0 <go-version>  e.g.: $0 1.25.3"
   GO_VERSION="1.25.3"
@@ -53,8 +107,6 @@ if [ -z "$1" ]; then
 else
   GO_VERSION="$1"
 fi
-
-
 
 # 获取原始用户信息（当使用sudo执行时）
 if [ -n "$SUDO_USER" ]; then

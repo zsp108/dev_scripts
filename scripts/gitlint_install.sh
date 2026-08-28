@@ -19,20 +19,50 @@ function log {
     {
     case $logtype in
         debug)
-            echo "${logformat}" &>> $logfile;;
+            echo "${logformat}" >> "$logfile" 2>&1;;
         info)
             echo -e "\033[32m $datetime [info] ${msg} \t \033[0m"
-            echo "${logformat}" &>> $logfile;;
+            echo "${logformat}" >> "$logfile" 2>&1;;
         warn)
             echo -e "\033[33m $datetime [WARN] ${msg} \t \033[0m"
-            echo "${logformat}" &>> $logfile;;
+            echo "${logformat}" >> "$logfile" 2>&1;;
         error)
             echo -e "\033[31m $datetime [ERROR] ${msg} \033[0m"
-            echo "${logformat}" &>> $logfile
+            echo "${logformat}" >> "$logfile" 2>&1
             exit 1;;
     esac
     }
 }
+
+# 卸载 gitlint
+function do_uninstall {
+    log "info" "开始卸载 gitlint..."
+    if [ -f "/usr/local/bin/gitlint" ]; then
+        if [ -w "/usr/local/bin" ] || [ "$EUID" -eq 0 ]; then
+            rm -f "/usr/local/bin/gitlint"
+        else
+            sudo rm -f "/usr/local/bin/gitlint"
+        fi
+        log "info" "已删除 /usr/local/bin/gitlint"
+    fi
+    rm -f "$HOME/.local/bin/gitlint"
+    log "info" "gitlint 卸载完成！"
+    exit 0
+}
+
+# 检查参数
+ACTION="${1:-}"
+case "$ACTION" in
+    uninstall|-u|--uninstall|remove)
+        do_uninstall
+        ;;
+    help|-h|--help)
+        echo "用法:"
+        echo "  $0            # 编译并安装 gitlint"
+        echo "  $0 uninstall  # 卸载 gitlint"
+        exit 0
+        ;;
+esac
 
 # 检查Go环境是否安装
 function check_go_environment {

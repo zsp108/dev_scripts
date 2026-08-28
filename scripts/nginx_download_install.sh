@@ -96,6 +96,45 @@ function log {
     }
 }
 
+do_uninstall() {
+    log info "开始卸载 Nginx 下载站点及配套服务..."
+
+    # 1. 停止并清理 url-downloader 服务
+    if systemctl is-active --quiet url-downloader.service 2>/dev/null; then
+        systemctl stop url-downloader.service 2>/dev/null || true
+    fi
+    systemctl disable url-downloader.service 2>/dev/null || true
+    rm -f /etc/systemd/system/url-downloader.service /etc/default/url-downloader /usr/local/bin/url_downloader.py
+
+    # 2. 停止并清理文件监控 watcher
+    if systemctl is-active --quiet nginx-download-watcher.path 2>/dev/null; then
+        systemctl stop nginx-download-watcher.path 2>/dev/null || true
+    fi
+    systemctl disable nginx-download-watcher.path 2>/dev/null || true
+    systemctl disable nginx-download-watcher.service 2>/dev/null || true
+    rm -f /etc/systemd/system/nginx-download-watcher.path
+    rm -f /etc/systemd/system/nginx-download-watcher.service
+    rm -f /usr/local/bin/nginx_download_index_gen.sh
+
+    systemctl daemon-reload 2>/dev/null || true
+
+    # 3. 清理 Nginx 站点配置
+    rm -f /etc/nginx/conf.d/downloads.conf
+    if command -v nginx >/dev/null 2>&1; then
+        nginx -t 2>/dev/null && nginx -s reload 2>/dev/null || true
+    fi
+
+    # 4. 若有 Docker filebrowser 容器，予以停止并删除
+    if command -v docker >/dev/null 2>&1; then
+        if docker ps -a --format '{{.Names}}' | grep -qw "$FILEBROWSER_NAME"; then
+            docker rm -f "$FILEBROWSER_NAME" 2>/dev/null || true
+            log info "已清理 Docker 容器: $FILEBROWSER_NAME"
+        fi
+    fi
+
+    log info "Nginx 下载站点及相关组件卸载完成！"
+}
+
 parse_args() {
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -178,6 +217,9 @@ parse_args() {
                 URL_DOWNLOADER_BIND="$2"
                 shift
                 ;;
+            -u|--uninstall|uninstall)
+                IS_UNINSTALL="true"
+                ;;
             -y|--yes)
                 ASSUME_YES="true"
                 ;;
@@ -196,6 +238,11 @@ parse_args() {
         esac
         shift
     done
+
+    if [ "${IS_UNINSTALL:-false}" = "true" ]; then
+        do_uninstall
+        exit 0
+    fi
 
     case "$DOWNLOAD_ROOT" in
         /*) ;;

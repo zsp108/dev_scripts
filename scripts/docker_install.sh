@@ -49,20 +49,39 @@ function log {
     {
     case $logtype in
         debug)
-            echo "${logformat}" &>> $logfile;;
+            echo "${logformat}" >> "$logfile" 2>&1;;
         info)
             echo -e "\033[32m $datetime [info] ${msg} \t \033[0m"
-            echo "${logformat}" &>> $logfile;;
+            echo "${logformat}" >> "$logfile" 2>&1;;
         warn)
             echo -e "\033[33m $datetime [WARN] ${msg} \t \033[0m"
-            echo "${logformat}" &>> $logfile;;
+            echo "${logformat}" >> "$logfile" 2>&1;;
         error)
             echo -e "\033[31m $datetime [ERROR] ${msg} \033[0m"
-            echo "${logformat}" &>> $logfile
+            echo "${logformat}" >> "$logfile" 2>&1
             exit 1;;
     esac
     }
 }
+
+# 命令分发 (支持 uninstall)
+ACTION="${1:-}"
+case "$ACTION" in
+    uninstall|-u|--uninstall|remove)
+        shift || true
+        if [ -f "$SCRIPT_ROOT/docker_uninstall.sh" ]; then
+            exec bash "$SCRIPT_ROOT/docker_uninstall.sh" "$@"
+        else
+            log error "未找到 docker_uninstall.sh 卸载脚本"
+        fi
+        ;;
+    help|-h|--help)
+        echo "用法:"
+        echo "  sudo $0              # 安装 Docker 引擎"
+        echo "  sudo $0 uninstall    # 卸载 Docker 引擎"
+        exit 0
+        ;;
+esac
 
 # 检查用户权限
 if [ "$EUID" -ne 0 ]; then

@@ -21,16 +21,16 @@ function log {
     {
     case $logtype in
         debug)
-            echo "${logformat}" &>> $logfile;;
+            echo "${logformat}" >> "$logfile" 2>&1;;
         info)
             echo -e "\033[32m $datetime [info] ${msg} \t \033[0m"
-            echo "${logformat}" &>> $logfile;;
+            echo "${logformat}" >> "$logfile" 2>&1;;
         warn)
             echo -e "\033[33m $datetime [WARN] ${msg} \t \033[0m"
-            echo "${logformat}" &>> $logfile;;
+            echo "${logformat}" >> "$logfile" 2>&1;;
         error)
             echo -e "\033[31m $datetime [ERROR] ${msg} \033[0m"
-            echo "${logformat}" &>> $logfile
+            echo "${logformat}" >> "$logfile" 2>&1
             exit 1;;
     esac
     }
@@ -47,6 +47,55 @@ else
     log info "检测到 root 用户执行，继续执行..."
 fi
 
+# 获取原始用户信息（当使用 sudo 执行时）
+if [ -n "$SUDO_USER" ]; then
+    ORIGINAL_USER="$SUDO_USER"
+    ORIGINAL_HOME=$(eval echo ~$SUDO_USER)
+else
+    ORIGINAL_USER="$USER"
+    ORIGINAL_HOME="$HOME"
+fi
+
+# 卸载 vim-go 及清理 .vimrc
+function do_uninstall {
+    log info "开始卸载 vim-go 插件及配置..."
+
+    # 删除插件目录
+    rm -rf "$ORIGINAL_HOME/.vim/pack/plugins/start/vim-go"
+    rm -rf "$HOME/.vim/pack/plugins/start/vim-go"
+    log info "已删除 vim-go 插件目录"
+
+    # 清理 .vimrc
+    cleanup_vimrc() {
+        local user_vimrc="$1/.vimrc"
+        if [ -f "$user_vimrc" ] && grep -q "Vim-Go 推荐基础配置" "$user_vimrc"; then
+            sed -i.bak '/" --- Vim-Go 推荐基础配置 ---/,+5d' "$user_vimrc" 2>/dev/null || true
+            rm -f "$user_vimrc.bak"
+            log info "已清理 $user_vimrc 中的 vim-go 配置"
+        fi
+    }
+
+    cleanup_vimrc "$ORIGINAL_HOME"
+    [ "$ORIGINAL_HOME" != "$HOME" ] && cleanup_vimrc "$HOME"
+
+    log info "vim-go 插件卸载完成！"
+    exit 0
+}
+
+# 命令分发
+ACTION="${1:-}"
+case "$ACTION" in
+    uninstall|-u|--uninstall|remove)
+        do_uninstall
+        ;;
+    help|-h|--help)
+        echo "用法:"
+        echo "  ./$0 [分支名]         # 安装 vim-go 插件 (默认: master)"
+        echo "  ./$0 uninstall       # 卸载 vim-go 插件并清理 .vimrc"
+        exit 0
+        ;;
+esac
+
 # 处理 vim-go 版本/分支参数
 if [ -z "$1" ]; then
   vim_go_branch="master"
@@ -54,17 +103,6 @@ if [ -z "$1" ]; then
 else
   vim_go_branch="$1"
   log info "使用指定 vim-go 分支/Tag: $vim_go_branch"
-fi
-
-# 获取原始用户信息（当使用 sudo 执行时）
-if [ -n "$SUDO_USER" ]; then
-    ORIGINAL_USER="$SUDO_USER"
-    ORIGINAL_HOME=$(eval echo ~$SUDO_USER)
-    log info "检测到 sudo 执行，原始用户: $ORIGINAL_USER, 原始家目录: $ORIGINAL_HOME"
-else
-    ORIGINAL_USER="$USER"
-    ORIGINAL_HOME="$HOME"
-    log info "直接执行，当前用户: $ORIGINAL_USER, 当前家目录: $ORIGINAL_HOME"
 fi
 
 # 获取系统版本信息

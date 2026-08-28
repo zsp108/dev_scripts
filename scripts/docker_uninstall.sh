@@ -57,16 +57,16 @@ function log {
     {
     case $logtype in
         debug)
-            echo "${logformat}" &>> "$logfile" ;;
+            echo "${logformat}" >> "$logfile" 2>&1 ;;
         info)
             echo -e "\033[32m ${datetime} [info] ${msg} \t \033[0m"
-            echo "${logformat}" &>> "$logfile" ;;
+            echo "${logformat}" >> "$logfile" 2>&1 ;;
         warn)
             echo -e "\033[33m ${datetime} [WARN] ${msg} \t \033[0m"
-            echo "${logformat}" &>> "$logfile" ;;
+            echo "${logformat}" >> "$logfile" 2>&1 ;;
         error)
             echo -e "\033[31m ${datetime} [ERROR] ${msg} \033[0m"
-            echo "${logformat}" &>> "$logfile"
+            echo "${logformat}" >> "$logfile" 2>&1
             exit 1 ;;
     esac
     }

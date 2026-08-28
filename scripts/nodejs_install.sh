@@ -24,19 +24,19 @@ function log {
     {
         case $logtype in
             debug)
-                echo "${logformat}" &>> "$logfile"
+                echo "${logformat}" >> "$logfile" 2>&1
                 ;;
             info)
                 echo -e "\033[32m $datetime [info] ${msg} \t \033[0m"
-                echo "${logformat}" &>> "$logfile"
+                echo "${logformat}" >> "$logfile" 2>&1
                 ;;
             warn)
                 echo -e "\033[33m $datetime [WARN] ${msg} \t \033[0m"
-                echo "${logformat}" &>> "$logfile"
+                echo "${logformat}" >> "$logfile" 2>&1
                 ;;
             error)
                 echo -e "\033[31m $datetime [ERROR] ${msg} \033[0m"
-                echo "${logformat}" &>> "$logfile"
+                echo "${logformat}" >> "$logfile" 2>&1
                 exit 1
                 ;;
         esac
@@ -189,8 +189,55 @@ install_gemini_cli() {
 }
 
 # -----------------------------
+# 卸载 Node.js 及清理
+# -----------------------------
+uninstall_node() {
+    log info "开始卸载 Node.js 及相关组件..."
+
+    case "$OS" in
+        macos)
+            if command -v brew >/dev/null 2>&1; then
+                brew uninstall node || true
+            fi
+            ;;
+        ubuntu|debian)
+            sudo apt-get purge -y nodejs npm 2>/dev/null || true
+            sudo apt-get autoremove -y 2>/dev/null || true
+            sudo rm -f /etc/apt/sources.list.d/nodesource.list*
+            ;;
+        centos|rhel|rocky|almalinux|ol)
+            if command -v yum >/dev/null 2>&1; then
+                sudo yum remove -y nodejs npm 2>/dev/null || true
+            else
+                sudo dnf remove -y nodejs npm 2>/dev/null || true
+            fi
+            sudo rm -f /etc/yum.repos.d/nodesource*.repo
+            ;;
+    esac
+
+    # 清理全局缓存
+    rm -rf "$ORIGINAL_HOME/.npm" "$ORIGINAL_HOME/.node-gyp" 2>/dev/null || true
+    log info "Node.js 卸载与清理完成！"
+}
+
+# -----------------------------
 # 主流程
 # -----------------------------
+ACTION="${1:-}"
+
+case "$ACTION" in
+    uninstall|-u|--uninstall|remove)
+        uninstall_node
+        exit 0
+        ;;
+    help|-h|--help)
+        echo "用法:"
+        echo "  sudo $0              # 安装 Node.js LTS"
+        echo "  sudo $0 uninstall    # 卸载 Node.js 及清理"
+        exit 0
+        ;;
+esac
+
 log info "开始安装 Node.js LTS + @openai/codex"
 
 case "$OS" in

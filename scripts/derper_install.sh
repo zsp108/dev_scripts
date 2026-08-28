@@ -19,6 +19,46 @@ PID_FILE="${PID_FILE:-${APP_DIR}/derper.pid}"                # PID 文件路径
 LOG_DIR="$(dirname "${LOG_FILE}")"
 # -----------------------------------------------
 
+# 卸载 DERP 服务
+function do_uninstall {
+    echo "=================================================="
+    echo "🗑️  开始卸载 Tailscale DERP 服务..."
+    echo "=================================================="
+
+    if [ -f "/etc/init.d/derper" ]; then
+        service derper stop 2>/dev/null || true
+        rm -f /etc/init.d/derper
+        echo "✅ 已注销并删除 /etc/init.d/derper"
+    fi
+
+    pkill -9 -f "derper -hostname" 2>/dev/null || true
+
+    read -r -p "是否删除数据与证书目录 (${APP_DIR})? [y/N]: " clean_data
+    if [[ "$clean_data" =~ ^[Yy]$ ]]; then
+        rm -rf "${APP_DIR}"
+        echo "✅ 已清理目录: ${APP_DIR}"
+    else
+        echo "ℹ️  已保留目录: ${APP_DIR}"
+    fi
+
+    echo "🎉 Tailscale DERP 卸载完成！"
+    exit 0
+}
+
+# 命令分发
+ACTION="${1:-}"
+case "$ACTION" in
+    uninstall|-u|--uninstall|remove)
+        do_uninstall
+        ;;
+    help|-h|--help)
+        echo "用法:"
+        echo "  sudo $0 [域名] [端口] [安装目录] [日志路径] # 安装并启动 DERP 服务"
+        echo "  sudo $0 uninstall                         # 停止并卸载 DERP 服务"
+        exit 0
+        ;;
+esac
+
 echo "=================================================="
 echo "🚀 开始安装与配置 Tailscale DERP"
 echo "📌 域名 (DOMAIN):      ${DOMAIN}"

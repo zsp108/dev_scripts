@@ -21,16 +21,16 @@ function log {
     {
     case $logtype in
         debug)
-            echo "${logformat}" &>> $logfile;;
+            echo "${logformat}" >> "$logfile" 2>&1;;
         info)
             echo -e "\033[32m $datetime [info] ${msg} \t \033[0m"
-            echo "${logformat}" &>> $logfile;;
+            echo "${logformat}" >> "$logfile" 2>&1;;
         warn)
             echo -e "\033[33m $datetime [WARN] ${msg} \t \033[0m"
-            echo "${logformat}" &>> $logfile;;
+            echo "${logformat}" >> "$logfile" 2>&1;;
         error)
             echo -e "\033[31m $datetime [ERROR] ${msg} \033[0m"
-            echo "${logformat}" &>> $logfile
+            echo "${logformat}" >> "$logfile" 2>&1
             exit 1;;
     esac
     }
@@ -49,6 +49,60 @@ else
     log info "检测到root用户执行，继续执行..."
     SUDO=""
 fi
+
+# 获取原始用户信息（当使用sudo执行或无sudo执行时）
+if [ -n "$SUDO_USER" ]; then
+    ORIGINAL_USER="$SUDO_USER"
+    ORIGINAL_HOME=$(eval echo ~$SUDO_USER)
+else
+    ORIGINAL_USER="$USER"
+    ORIGINAL_HOME="$HOME"
+fi
+
+# 卸载 Protobuf 及插件
+function do_uninstall {
+    log info "开始卸载 Protobuf 及 protoc-gen-go..."
+
+    $SUDO rm -f /usr/local/bin/protoc /usr/local/bin/protoc-gen-go
+    $SUDO rm -rf /usr/local/include/google/protobuf
+    $SUDO rm -f /usr/local/lib/libproto* /usr/local/lib/libprotoc* 2>/dev/null || true
+    if command -v ldconfig >/dev/null 2>&1; then
+        $SUDO ldconfig 2>/dev/null || true
+    fi
+
+    # 清理 .bashrc 中的环境变量
+    cleanup_pb_bashrc() {
+        local user_home="$1"
+        local user_bashrc="$user_home/.bashrc"
+        if [ -f "$user_bashrc" ] && grep -q "# Set PATH to include Protobuf" "$user_bashrc"; then
+            sed -i.bak '/# Set PATH to include Protobuf/,+1d' "$user_bashrc" 2>/dev/null || true
+            rm -f "$user_bashrc.bak"
+            log info "已清理 $user_bashrc 中的 Protobuf 环境变量"
+        fi
+    }
+
+    cleanup_pb_bashrc "$HOME"
+    if [ "$ORIGINAL_USER" != "$USER" ] && [ "$ORIGINAL_HOME" != "$HOME" ]; then
+        cleanup_pb_bashrc "$ORIGINAL_HOME"
+    fi
+
+    log info "Protobuf 及插件卸载完成！请执行 'source ~/.bashrc'。"
+    exit 0
+}
+
+# 命令分发
+ACTION="${1:-}"
+case "$ACTION" in
+    uninstall|-u|--uninstall|remove)
+        do_uninstall
+        ;;
+    help|-h|--help)
+        echo "用法:"
+        echo "  ./$0 [pb_version] [gen_go_ver] # 编译安装 Protobuf 及插件"
+        echo "  ./$0 uninstall                 # 卸载 Protobuf 及插件并清理环境变量"
+        exit 0
+        ;;
+esac
 
 # 处理 Protobuf 版本参数
 if [ -z "$1" ]; then

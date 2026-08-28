@@ -35,19 +35,19 @@ function log {
     {
     case "$logtype" in
         debug)
-            echo "${logformat}" &>> "$logfile"
+            echo "${logformat}" >> "$logfile" 2>&1
             ;;
         info)
             echo -e "\033[32m $datetime [info] ${msg} \t \033[0m"
-            echo "${logformat}" &>> "$logfile"
+            echo "${logformat}" >> "$logfile" 2>&1
             ;;
         warn)
             echo -e "\033[33m $datetime [WARN] ${msg} \t \033[0m"
-            echo "${logformat}" &>> "$logfile"
+            echo "${logformat}" >> "$logfile" 2>&1
             ;;
         error)
             echo -e "\033[31m $datetime [ERROR] ${msg} \033[0m"
-            echo "${logformat}" &>> "$logfile"
+            echo "${logformat}" >> "$logfile" 2>&1
             exit 1
             ;;
     esac
@@ -113,6 +113,39 @@ EOF
 }
 
 
+### 卸载/清理环境配置 ##############################################
+do_clean_env() {
+    log info "开始清理环境配置与代理设置..."
+
+    clean_user_bashrc() {
+        local user_home="$1"
+        local user_bashrc="$user_home/.bashrc"
+
+        if [ -f "$user_bashrc" ]; then
+            # 清理代理函数段
+            sed -i.bak '/# Proxy config/,/showproxy$/d' "$user_bashrc" 2>/dev/null || true
+            sed -i.bak '/function setproxy()/,/showproxy$/d' "$user_bashrc" 2>/dev/null || true
+            # 清理 WORKSPACE 与别名
+            sed -i.bak '/export WORKSPACE=/d' "$user_bashrc" 2>/dev/null || true
+            sed -i.bak '/alias ws=/d' "$user_bashrc" 2>/dev/null || true
+            sed -i.bak '/export LANG=en_US.UTF-8/d' "$user_bashrc" 2>/dev/null || true
+            sed -i.bak '/export LC_ALL=en_US.UTF-8/d' "$user_bashrc" 2>/dev/null || true
+            rm -f "$user_bashrc.bak"
+            log info "已清理 $user_bashrc 中的环境变量与代理设置"
+        fi
+    }
+
+    clean_user_bashrc "$HOME"
+    if [ -n "$SUDO_USER" ]; then
+        local orig_home
+        orig_home=$(eval echo ~"$SUDO_USER")
+        [ "$orig_home" != "$HOME" ] && clean_user_bashrc "$orig_home"
+    fi
+
+    log info "环境与代理配置清理完成！请执行 'source ~/.bashrc'。"
+    exit 0
+}
+
 ### 解析模式 ###########################################################
 MODE="all"
 
@@ -120,6 +153,9 @@ case "$1" in
     -h|--help)
         show_help
         exit 0
+        ;;
+    clean|uninstall|-u|--uninstall)
+        do_clean_env
         ;;
     env|proxy|all)
         MODE="$1"
