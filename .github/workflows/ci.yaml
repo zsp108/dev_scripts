@@ -111,67 +111,54 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Render CI Summary Report
+        env:
+          LINT_RES: ${{ needs.lint-and-syntax.result }}
+          MATRIX_RES: ${{ needs.os-arch-matrix.result }}
+          LIFECYCLE_RES: ${{ needs.tools-lifecycle-test.result }}
         run: |
-          LINT_RES="${{ needs.lint-and-syntax.result }}"
-          MATRIX_RES="${{ needs.os-arch-matrix.result }}"
-          LIFECYCLE_RES="${{ needs.tools-lifecycle-test.result }}"
+          python3 -c "
+import os, sys
 
-          get_badge() {
-            if [ "$1" = "success" ]; then
-              echo "✅ Passed"
-            elif [ "$1" = "skipped" ]; then
-              echo "⚪ Skipped"
-            else
-              echo "❌ Failed"
-            fi
-          }
+lint_res = os.environ.get('LINT_RES', 'unknown')
+matrix_res = os.environ.get('MATRIX_RES', 'unknown')
+lifecycle_res = os.environ.get('LIFECYCLE_RES', 'unknown')
 
-          OVERALL_STATUS="✅ ALL CHECKS PASSED (全部通过)"
-          if [ "$LINT_RES" != "success" ] || [ "$MATRIX_RES" != "success" ] || [ "$LIFECYCLE_RES" != "success" ]; then
-            OVERALL_STATUS="❌ SOME CHECKS FAILED (部分检查未通过)"
-          fi
+def badge(s):
+    if s == 'success': return '✅ Passed'
+    if s == 'skipped': return '⚪ Skipped'
+    return '❌ Failed'
 
-          COMMIT_SHORT=$(git rev-parse --short HEAD 2>/dev/null || echo "${{ github.sha }}")
-          COMMIT_MSG=$(git log -1 --pretty=%B 2>/dev/null | head -n 1 || echo "")
-          BRANCH_NAME="${{ github.ref_name }}"
+passed = (lint_res == 'success' and matrix_res == 'success' and lifecycle_res == 'success')
+overall = '✅ ALL CHECKS PASSED (全部通过)' if passed else '❌ SOME CHECKS FAILED (部分检查未通过)'
 
-          cat << 'REPORT_EOF' > summary.md
-# 🚀 Dev Scripts CI 全矩阵测试汇总报告
+branch = os.environ.get('GITHUB_REF_NAME', 'develop')
+commit = os.environ.get('GITHUB_SHA', '')[:7]
 
-REPORT_EOF
+lines = [
+    '# 🚀 Dev Scripts CI 全矩阵测试汇总报告\n',
+    f'> **分支 (Branch)**: `{branch}` | **提交 (Commit)**: `{commit}`  \n',
+    f'> **整体执行状态**: **{overall}**\n\n---\n',
+    '### 📋 测试阶段与架构矩阵详情\n\n',
+    '| 测试阶段 (Job) | 目标架构与运行环境 | 状态 |\n',
+    '| :--- | :--- | :---: |\n',
+    f'| 🔍 **代码与语法自检** | `Ubuntu 24.04` (x86_64) | {badge(lint_res)} |\n',
+    f'| 🐧 **Linux x86_64 原生矩阵** | `Ubuntu 24.04` (x86_64) | {badge(matrix_res)} |\n',
+    f'| 🚀 **Linux ARM64 原生矩阵** | `Ubuntu 24.04 ARM` (aarch64) | {badge(matrix_res)} |\n',
+    f'| 🍎 **macOS Apple Silicon** | `macOS 14+` (Apple M-Series) | {badge(matrix_res)} |\n',
+    f'| 🔄 **工具链生命周期闭环** | `Ubuntu 24.04` (x86_64) | {badge(lifecycle_res)} |\n\n---\n',
+    '### 📦 覆盖的自动化运维与开发脚本 (共 16 个)\n',
+    '- 🧰 **基础开发工具**: `go_install.sh`、`nodejs_install.sh`、`git_install.sh`、`protobuf_install.sh`、`vim_go_install.sh`、`gitlint_install.sh`、`env_init.sh`\n',
+    '- 🌐 **服务与存储组件**: `filebrowser_install.sh`、`samba_install.sh`、`nginx_download_install.sh`、`derper_install.sh`\n',
+    '- 🐳 **容器引擎**: `docker_install.sh`\n',
+    '- ⚙️ **工具集**: `tools/codex_switch.sh`、`tools/scan_ip.sh`、`tools/scan_ip2.sh`、`tools/v2ray_conf_setting.sh`\n'
+]
 
-          cat << EOF >> summary.md
-> **分支 (Branch)**: \`$BRANCH_NAME\` | **提交 (Commit)**: \`$COMMIT_SHORT\` ($COMMIT_MSG)  
-> **整体执行状态**: **$OVERALL_STATUS**
+summary_path = os.environ.get('GITHUB_STEP_SUMMARY')
+if summary_path:
+    with open(summary_path, 'a', encoding='utf-8') as sf:
+        sf.writelines(lines)
 
----
-
-### 📋 测试阶段与架构矩阵详情
-
-| 测试阶段 (Job) | 目标架构与运行环境 | 测试内容 | 状态 |
-| :--- | :--- | :--- | :---: |
-| 🔍 **代码与语法自检** | \`Ubuntu 24.04\` (x86_64) | Gitlint 规范校验 + 16 个脚本 \`bash -n\` 全量语法检测 + \`list\` 版本查询 | $(get_badge "$LINT_RES") |
-| 🐧 **Linux x86_64 原生矩阵** | \`Ubuntu 24.04\` (x86_64) | 官方 Linux x86 语法与环境检测 | $(get_badge "$MATRIX_RES") |
-| 🚀 **Linux ARM64 原生矩阵** | \`Ubuntu 24.04 ARM\` (aarch64) | 原生 ARM 硬件架构语法与环境兼容性 | $(get_badge "$MATRIX_RES") |
-| 🍎 **macOS Apple Silicon** | \`macOS 14+\` (Apple M-Series) | macOS Darwin 环境与 Homebrew 兼容性 | $(get_badge "$MATRIX_RES") |
-| 🔄 **工具链生命周期闭环** | \`Ubuntu 24.04\` (x86_64) | Go / Protobuf / Vim-go 安装 ➔ 验证 ➔ 卸载清理闭环 | $(get_badge "$LIFECYCLE_RES") |
-
----
-
-### 📦 覆盖的自动化运维与开发脚本 (共 16 个)
-
-- 🧰 **基础开发工具**: \`go_install.sh\`、\`nodejs_install.sh\`、\`git_install.sh\`、\`protobuf_install.sh\`、\`vim_go_install.sh\`、\`gitlint_install.sh\`、\`env_init.sh\`
-- 🌐 **服务与存储组件**: \`filebrowser_install.sh\`、\`samba_install.sh\`、\`nginx_download_install.sh\`、\`derper_install.sh\`
-- 🐳 **容器引擎**: \`docker_install.sh\`
-- ⚙️ **工具集**: \`tools/codex_switch.sh\`、\`tools/scan_ip.sh\`、\`tools/scan_ip2.sh\`、\`tools/v2ray_conf_setting.sh\`
-
----
-*由 GitHub Actions 自动生成于 $(date -u '+%Y-%m-%d %H:%M:%S UTC')*
-EOF
-
-          cat summary.md >> $GITHUB_STEP_SUMMARY
-
-          if [ "$OVERALL_STATUS" != "✅ ALL CHECKS PASSED (全部通过)" ]; then
-            echo "CI 流程中存在未通过的 Job，请检查详细日志。"
-            exit 1
-          fi
+if not passed:
+    print('CI 存在未通过的 Job，请检查详细日志。')
+    sys.exit(1)
+"
