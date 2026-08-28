@@ -6,14 +6,11 @@
 #           RedHat 系列 (RHEL, CentOS, Rocky Linux, AlmaLinux, Fedora, openEuler 等)
 # 适用架构: x86_64, aarch64 (ARM64), armv7l, armhf, i386 等
 # 用户隔离: 支持每个用户独立私有存储目录 (0700 权限隔离) + 可选公共共享区
-# 服务托管: 智能三级自适应探测：
-#           1. 首选：systemctl (systemd 服务，开机自启)
-#           2. 次选：service (SysVinit / /etc/init.d/ 注册管理，适配 Docker/WSL1/容器环境)
-#           3. 兜底：直接后台进程管理 (smbd -D)
+# 服务托管: 智能三级自适应探测 (systemctl ➔ service ➔ direct)
 #
 # 用法:
-#   1. 交互式运行:
-#      sudo ./samba_install.sh
+#   1. 交互式运行 (自动提权):
+#      ./samba_install.sh
 #   2. 快速安装 (自动注册服务并启动):
 #      sudo ./samba_install.sh install [公共目录路径] [用户私有基目录] [初始用户名] [密码]
 #      例如: sudo ./samba_install.sh install /data/share /data/users smbuser 123456
@@ -47,34 +44,33 @@ function log {
     
     case "$logtype" in
         debug)
-            echo "${logformat}" >> "$logfile" 2>&1
+            echo "${logformat}" >> "$logfile" 2>&1 || true
             ;;
         info)
             echo -e "\033[32m${datetime} [INFO]  ${msg}\033[0m"
-            echo "${logformat}" >> "$logfile" 2>&1
+            echo "${logformat}" >> "$logfile" 2>&1 || true
             ;;
         warn)
             echo -e "\033[33m${datetime} [WARN]  ${msg}\033[0m"
-            echo "${logformat}" >> "$logfile" 2>&1
+            echo "${logformat}" >> "$logfile" 2>&1 || true
             ;;
         error)
             echo -e "\033[31m${datetime} [ERROR] ${msg}\033[0m"
-            echo "${logformat}" >> "$logfile" 2>&1
+            echo "${logformat}" >> "$logfile" 2>&1 || true
             exit 1
             ;;
     esac
 }
 
-# 检查用户权限
+# 检查权限并自动提权 (Self-Elevation)
 function check_permission {
     if [ "$EUID" -ne 0 ]; then
-        if ! sudo -n true 2>/dev/null; then
-            log error "当前用户没有 sudo 权限，请以 root 用户或使用 sudo 执行此脚本。"
+        if command -v sudo >/dev/null 2>&1; then
+            log info "检测到非 root 用户执行，正在自动切换为 sudo 权限执行..."
+            exec sudo bash "$0" "$@"
         else
-            log info "检测到非 root 用户但具有 sudo 权限，继续执行..."
+            log error "当前不是 root 用户且系统中未找到 sudo 命令，请使用 root 用户执行此脚本。"
         fi
-    else
-        log info "检测到 root 用户执行，继续执行..."
     fi
 }
 
@@ -121,7 +117,6 @@ function detect_system {
 
 # 智能探测当前环境服务管理器 (systemd ➔ SysVinit/service ➔ direct)
 function detect_service_manager {
-    # 1. 检查 systemd 是否真正活跃且可用
     if [ "$EUID" -eq 0 ] && command -v systemctl >/dev/null 2>&1; then
         local systemctl_test
         systemctl_test="$(systemctl is-system-running 2>&1 || true)"
@@ -131,13 +126,11 @@ function detect_service_manager {
         fi
     fi
 
-    # 2. 检查 SysVinit / service / /etc/init.d/ 是否可用
     if [ -d "/etc/init.d" ] || command -v service >/dev/null 2>&1 || command -v update-rc.d >/dev/null 2>&1 || command -v chkconfig >/dev/null 2>&1; then
         echo "sysvinit"
         return 0
     fi
 
-    # 3. 兜底直接进程管理
     echo "direct"
 }
 
@@ -232,7 +225,7 @@ function setup_user_private_dir {
     if [ -n "$user_base_dir" ] && [ -n "$username" ]; then
         local user_dir="${user_base_dir}/${username}"
         mkdir -p "$user_dir"
-        chown -R "${username}:${username}" "$user_dir" 2>/dev/null || chown -R "${username}" "$user_dir"
+        chown -R "${username}:${username}" "$user_dir" 2>/dev/null || chown -R "${username}" "$user_dir" 2>/dev/null || true
         chmod 0700 "$user_dir"
         log info "已为用户 [$username] 创建独立私有存储目录: $user_dir (权限: 0700 私有隔离)"
     fi
@@ -257,20 +250,29 @@ function setup_samba_user {
 
     log info "正在配置 Samba 用户 [$smb_user]..."
 
-    # 1. 确保系统用户存在
-    if ! id "$smb_user" >/dev/null 2>&1; then
-        log info "系统用户 [$smb_user] 不存在，自动创建系统账户（无登录shell）..."
-        useradd -M -s /sbin/nologin "$smb_user" 2>/dev/null || useradd -M -s /usr/sbin/nologin "$smb_user" 2>/dev/null || useradd "$smb_user"
+    # 1. 检查 Samba 工具是否已安装
+    if ! command -v smbpasswd >/dev/null 2>&1; then
+        log warn "未检测到 smbpasswd 命令，正在为您自动安装 Samba 组件..."
+        install_packages
     fi
 
-    # 2. 将用户添加到 Samba 数据库并设置密码
-    (echo "$smb_pass"; echo "$smb_pass") | smbpasswd -s -a "$smb_user" >> "$logfile" 2>&1
-    smbpasswd -e "$smb_user" >> "$logfile" 2>&1
+    # 2. 确保系统用户存在
+    if ! id "$smb_user" >/dev/null 2>&1; then
+        log info "系统用户 [$smb_user] 不存在，自动创建系统账户（无登录shell）..."
+        useradd -M -s /usr/sbin/nologin "$smb_user" 2>/dev/null || \
+        useradd -M -s /sbin/nologin "$smb_user" 2>/dev/null || \
+        useradd -s /bin/false "$smb_user" 2>/dev/null || \
+        useradd "$smb_user"
+    fi
 
-    # 3. 创建专属私有隔离目录
+    # 3. 将用户添加到 Samba 数据库并设置密码
+    (echo "$smb_pass"; echo "$smb_pass") | smbpasswd -s -a "$smb_user"
+    smbpasswd -e "$smb_user" >/dev/null 2>&1 || true
+
+    # 4. 创建专属私有隔离目录
     setup_user_private_dir "$user_base_dir" "$smb_user"
 
-    log info "Samba 用户 [$smb_user] 密码设置、启用及私有隔离空间创建成功！"
+    log info "✅ Samba 用户 [$smb_user] 密码设置、启用及私有隔离空间创建成功！"
 }
 
 # 写入 Samba 主配置文件 /etc/samba/smb.conf
@@ -332,7 +334,7 @@ EOF
     # 1. 写入用户独立私有空间共享段 (基于 %U 宏变量实现自动隔离)
     cat << EOF >> "$smb_conf"
 # ------------------------------------------------------------------------------
-# 👤 用户独立私有隔离存储空间 (每个用户只能看到和进入自己的专属目录)
+# 👤 用户独立私有隔离存储空间 (进入 /data/users/用户名)
 # ------------------------------------------------------------------------------
 [private]
     comment = 个人私有存储空间 (%U)
@@ -345,19 +347,23 @@ EOF
     directory mask = 0700
     force create mode = 0700
     force directory mode = 0700
-    root preexec = /bin/mkdir -m 0700 -p ${user_base_dir}/%U && /bin/chown %U:%U ${user_base_dir}/%U
+    root preexec = /bin/sh -c '/bin/mkdir -m 0700 -p ${user_base_dir}/%U && /bin/chown %U:%U ${user_base_dir}/%U'
 
 # ------------------------------------------------------------------------------
-# 🏠 原生 Home 目录共享
+# 👤 允许直接使用 \\IP\用户名 访问专属数据目录 (重定向到 /data/users/用户名，不走 ~ 家目录)
 # ------------------------------------------------------------------------------
 [homes]
-    comment = 用户家目录 (%S)
+    comment = 个人专属存储空间 (%S)
+    path = ${user_base_dir}/%S
     browseable = no
     writable = yes
     read only = no
     valid users = %S
     create mask = 0700
     directory mask = 0700
+    force create mode = 0700
+    force directory mode = 0700
+    root preexec = /bin/sh -c '/bin/mkdir -m 0700 -p ${user_base_dir}/%S && /bin/chown %S:%S ${user_base_dir}/%S'
 
 EOF
 
@@ -673,7 +679,6 @@ function do_install {
     echo "========================================================"
     echo ""
 
-    # 获取公共共享目录
     if [ -n "$input_public_dir" ]; then
         PUBLIC_DIR="$input_public_dir"
     else
@@ -681,7 +686,6 @@ function do_install {
         PUBLIC_DIR="${PUBLIC_DIR:-/data/share}"
     fi
 
-    # 获取用户私有隔离根目录
     if [ -n "$input_user_base_dir" ]; then
         USER_BASE_DIR="$input_user_base_dir"
     else
@@ -689,7 +693,6 @@ function do_install {
         USER_BASE_DIR="${USER_BASE_DIR:-/data/users}"
     fi
 
-    # 获取初始用户
     if [ -n "$input_user" ]; then
         SMB_USER="$input_user"
     else
@@ -697,7 +700,6 @@ function do_install {
         SMB_USER="${SMB_USER:-$ORIGINAL_USER}"
     fi
 
-    # 获取密码
     if [ -n "$input_pass" ]; then
         SMB_PASS="$input_pass"
     else
@@ -780,7 +782,6 @@ function do_uninstall {
         exit 0
     fi
 
-    # 注销服务并清理进程
     unregister_service
 
     log info "正在卸载 Samba 软件包..."
@@ -832,6 +833,10 @@ function do_adduser {
         while true; do
             read -r -s -p "请输入 [$new_user] 的密码: " new_pass
             echo ""
+            if [ -z "$new_pass" ]; then
+                echo "密码不能为空！"
+                continue
+            fi
             read -r -s -p "请再次确认密码: " new_pass_confirm
             echo ""
             if [ "$new_pass" != "$new_pass_confirm" ]; then
@@ -843,7 +848,6 @@ function do_adduser {
     fi
 
     setup_samba_user "$new_user" "$new_pass" "$user_base_dir"
-    log info "用户 [$new_user] 已配置完毕，专属私有目录: ${user_base_dir}/${new_user}"
 }
 
 # 删除用户
@@ -900,43 +904,33 @@ function main_menu {
         case "$choice" in
             1)
                 do_install
-                break
                 ;;
             2)
                 register_service
-                break
                 ;;
             3)
                 unregister_service
-                break
                 ;;
             4)
                 service_control status
-                break
                 ;;
             5)
                 service_control start
-                break
                 ;;
             6)
                 service_control stop
-                break
                 ;;
             7)
                 service_control restart
-                break
                 ;;
             8)
                 do_adduser
-                break
                 ;;
             9)
                 do_deluser
-                break
                 ;;
             10)
                 do_uninstall
-                break
                 ;;
             0)
                 echo "已退出。"
