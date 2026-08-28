@@ -752,13 +752,11 @@ function do_install {
     log info "配置参数确认:"
     log info "  团队公共目录: $PUBLIC_DIR"
     log info "  用户隔离根目录: $USER_BASE_DIR (每个用户自动分配 $USER_BASE_DIR/<用户名>)"
-    log info "  初始用户账号: $SMB_USER"
-
     # 执行安装各步骤
     install_packages
     setup_public_directory "$PUBLIC_DIR"
-    setup_samba_user "$SMB_USER" "$SMB_PASS" "$USER_BASE_DIR"
     configure_smb_conf "$PUBLIC_DIR" "$USER_BASE_DIR"
+    setup_samba_user "$SMB_USER" "$SMB_PASS" "$USER_BASE_DIR"
     configure_selinux "$PUBLIC_DIR" "$USER_BASE_DIR"
     configure_firewall
     register_service
