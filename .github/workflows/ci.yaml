@@ -154,14 +154,15 @@ jobs:
             "
 
   tools-lifecycle-test:
-    name: Tools Install & Uninstall Lifecycle
+    name: Real Installation & Lifecycle Test
     needs: lint-and-syntax
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      - name: Install Go environment
+      # 1. Go 安装与环境验证
+      - name: Install Go environment (Real Execution)
         run: |
           sudo make install-go GO_VERSION=1.23.2
           echo "/root/go/go1.23.2/bin" >> $GITHUB_PATH
@@ -173,15 +174,50 @@ jobs:
           export PATH=/root/go/go1.23.2/bin:$HOME/go/go1.23.2/bin:$PATH
           make check
 
-      - name: Install Protobuf
+      # 2. Node.js 安装与验证
+      - name: Install Node.js (Real Execution)
+        run: sudo ./scripts/nodejs_install.sh 20
+
+      - name: Verify Node.js & npm
+        run: |
+          node -v
+          npm -v
+
+      - name: Uninstall Node.js
+        run: sudo ./scripts/nodejs_install.sh uninstall
+
+      # 3. Nginx 文件下载站点部署与验证
+      - name: Deploy Nginx Download Server (Real Execution)
+        run: |
+          mkdir -p /tmp/ci_downloads
+          echo "Antigravity CI Real Test File" > /tmp/ci_downloads/test_package.tar.gz
+          sudo ./scripts/nginx_download_install.sh --root /tmp/ci_downloads --port 8088 --skip-filebrowser -y
+
+      - name: Verify Nginx Download HTTP response & Index Generation
+        run: |
+          sleep 2
+          curl -fsSL http://127.0.0.1:8088/ | grep -q "test_package.tar.gz" || {
+            echo "Failed to find test_package.tar.gz in index page"
+            curl -i http://127.0.0.1:8088/ || true
+            exit 1
+          }
+          echo "✓ Nginx Download Service successfully verified via HTTP!"
+
+      - name: Uninstall Nginx Download Server
+        run: sudo ./scripts/nginx_download_install.sh --uninstall
+
+      # 4. Protobuf 安装与验证
+      - name: Install Protobuf (Real Execution)
         run: sudo ./scripts/protobuf_install.sh v25.3 v1.5.2
 
       - name: Verify Protobuf
         run: protoc --version
 
-      - name: Install vim-go environment
+      # 5. vim-go IDE 安装
+      - name: Install vim-go environment (Real Execution)
         run: ./scripts/vim_go_install.sh
 
+      # 6. 反向清理与卸载验证
       - name: Uninstall Protobuf
         run: sudo ./scripts/protobuf_install.sh uninstall
 
