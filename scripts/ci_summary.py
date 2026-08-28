@@ -4,6 +4,7 @@ import sys
 
 lint_res = os.environ.get("LINT_RES", "unknown")
 matrix_res = os.environ.get("MATRIX_RES", "unknown")
+centos_res = os.environ.get("CENTOS_RES", "unknown")
 lifecycle_res = os.environ.get("LIFECYCLE_RES", "unknown")
 
 def badge(s):
@@ -14,7 +15,7 @@ def badge(s):
     else:
         return "❌ Failed"
 
-passed = (lint_res == "success" and matrix_res == "success" and lifecycle_res == "success")
+passed = (lint_res == "success" and matrix_res == "success" and centos_res == "success" and lifecycle_res == "success")
 overall = "✅ ALL CHECKS PASSED (全部通过)" if passed else "❌ SOME CHECKS FAILED (部分检查未通过)"
 
 branch = os.environ.get("GITHUB_REF_NAME", "develop")
@@ -28,7 +29,8 @@ lines = [
     "| 测试阶段 (Job) | 目标架构与运行环境 | 状态 |\n",
     "| :--- | :--- | :---: |\n",
     f"| 🔍 **代码与语法自检** | `Ubuntu 24.04` (x86_64) | {badge(lint_res)} |\n",
-    f"| 🐧 **Linux 多版本矩阵** | `Ubuntu 24.04` / `Ubuntu 22.04` | {badge(matrix_res)} |\n",
+    f"| 🐧 **Ubuntu 官方矩阵** | `Ubuntu 24.04` / `Ubuntu 22.04` (x86_64) | {badge(matrix_res)} |\n",
+    f"| 🔴 **CentOS 7 跨架构矩阵** | `CentOS 7` (x86_64 & ARM64 Docker 容器) | {badge(centos_res)} |\n",
     f"| 🍎 **macOS Apple Silicon** | `macOS 14+` (Apple M-Series ARM64) | {badge(matrix_res)} |\n",
     f"| 🔄 **工具链生命周期闭环** | `Ubuntu 24.04` (x86_64) | {badge(lifecycle_res)} |\n\n---\n\n",
     "### 📦 覆盖的自动化运维与开发脚本 (共 16 个)\n",

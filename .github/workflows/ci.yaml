@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -59,7 +59,7 @@ jobs:
             runner: macos-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Test shell scripts syntax on ${{ matrix.os }} (${{ matrix.arch }})
         run: make test
@@ -67,13 +67,54 @@ jobs:
       - name: Environment check
         run: make check
 
+  centos-matrix:
+    name: CentOS 7 (${{ matrix.arch }})
+    needs: lint-and-syntax
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            image: centos:7
+            platform: linux/amd64
+          - arch: arm64
+            image: arm64v8/centos:7
+            platform: linux/arm64
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up QEMU for multi-architecture emulation
+        if: matrix.arch == 'arm64'
+        uses: docker/setup-qemu-action@v3
+
+      - name: Test shell scripts on CentOS 7 (${{ matrix.arch }})
+        run: |
+          docker run --rm \
+            --platform ${{ matrix.platform }} \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            ${{ matrix.image }} \
+            /bin/bash -c "
+              echo '=== Running on CentOS 7 ${{ matrix.arch }} ==='
+              for script in scripts/*.sh; do
+                if [ -f \"\$script\" ]; then
+                  printf '  Checking '\"\$script\"'... '
+                  /bin/bash -n \"\$script\" || exit 1
+                  echo 'OK'
+                fi
+              done
+              echo '✓ All scripts passed syntax check on CentOS 7 (${{ matrix.arch }})'
+            "
+
   tools-lifecycle-test:
     name: Tools Install & Uninstall Lifecycle
     needs: lint-and-syntax
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Go environment
         run: |
@@ -117,16 +158,17 @@ jobs:
 
   ci-summary:
     name: Generate Summary Report
-    needs: [lint-and-syntax, os-arch-matrix, tools-lifecycle-test]
+    needs: [lint-and-syntax, os-arch-matrix, centos-matrix, tools-lifecycle-test]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Render CI Summary Report
         env:
           LINT_RES: ${{ needs.lint-and-syntax.result }}
           MATRIX_RES: ${{ needs.os-arch-matrix.result }}
+          CENTOS_RES: ${{ needs.centos-matrix.result }}
           LIFECYCLE_RES: ${{ needs.tools-lifecycle-test.result }}
         run: python3 scripts/ci_summary.py
