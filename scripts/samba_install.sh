@@ -331,29 +331,13 @@ function configure_smb_conf {
 
 EOF
 
-    # 1. 写入用户独立私有空间共享段 (基于 %U 宏变量实现自动隔离)
+    # 1. 写入用户独立私有空间共享段 (每个用户直接使用自己的用户名访问: \\IP\用户名 或 smb://IP/用户名)
     cat << EOF >> "$smb_conf"
 # ------------------------------------------------------------------------------
-# 👤 用户独立私有隔离存储空间 (进入 /data/users/用户名)
-# ------------------------------------------------------------------------------
-[private]
-    comment = 个人私有存储空间 (%U)
-    path = ${user_base_dir}/%U
-    browseable = yes
-    writable = yes
-    read only = no
-    valid users = %U
-    create mask = 0700
-    directory mask = 0700
-    force create mode = 0700
-    force directory mode = 0700
-    root preexec = /bin/sh -c '/bin/mkdir -m 0700 -p ${user_base_dir}/%U && /bin/chown %U:%U ${user_base_dir}/%U'
-
-# ------------------------------------------------------------------------------
-# 👤 允许直接使用 \\IP\用户名 访问专属数据目录 (重定向到 /data/users/用户名，不走 ~ 家目录)
+# 👤 用户独立私有隔离存储空间 (客户端直接连接 \\IP\用户名 或 smb://IP/用户名)
 # ------------------------------------------------------------------------------
 [homes]
-    comment = 个人专属存储空间 (%S)
+    comment = %S 的专属个人私有空间
     path = ${user_base_dir}/%S
     browseable = no
     writable = yes
@@ -744,7 +728,7 @@ function do_install {
     echo -e "\033[32m========================================================\033[0m"
     echo -e "服务器内网 IP:     \033[36m$LOCAL_IP\033[0m"
     echo -e "公共共享路径:      \033[36m$PUBLIC_DIR (网络共享名: public)\033[0m"
-    echo -e "用户隔离存储基目录:\033[36m$USER_BASE_DIR (网络共享名: private)\033[0m"
+    echo -e "用户隔离存储基目录:\033[36m$USER_BASE_DIR (按用户名挂载专属目录)\033[0m"
     echo -e "已创建初始用户:    \033[36m$SMB_USER (私有空间: ${USER_BASE_DIR}/${SMB_USER})\033[0m"
     if [ "$s_mgr" = "systemd" ]; then
         echo -e "服务托管模式:      \033[36msystemd (systemctl status samba)\033[0m"
@@ -753,9 +737,9 @@ function do_install {
     fi
     echo "--------------------------------------------------------"
     echo "📁 客户端访问方式说明:"
-    echo -e " 1. \033[33m访问个人专属私有目录 (仅自己可见/可读写，相互隔离)\033[0m:"
-    echo -e "    • Windows: \033[32m\\\\${LOCAL_IP}\\private\033[0m (系统自动映射到您自己的私有目录)"
-    echo -e "    • macOS:   \033[32msmb://${LOCAL_IP}/private\033[0m"
+    echo -e " 1. \033[33m访问个人专属私有目录 (仅自己可见/可读写，挂载名显示为用户名)\033[0m:"
+    echo -e "    • Windows: \033[32m\\\\${LOCAL_IP}\\${SMB_USER}\033[0m"
+    echo -e "    • macOS:   \033[32msmb://${LOCAL_IP}/${SMB_USER}\033[0m"
     echo ""
     echo -e " 2. \033[33m访问团队公共共享区 (所有团队成员共享协作)\033[0m:"
     echo -e "    • Windows: \033[32m\\\\${LOCAL_IP}\\public\033[0m"
@@ -763,7 +747,7 @@ function do_install {
     echo "--------------------------------------------------------"
     echo "👥 添加更多隔离用户:"
     echo "    执行: sudo ./samba_install.sh adduser <新用户名> <密码>"
-    echo "    (系统将自动为新用户创建独立的私有存储目录并加锁隔离)"
+    echo "    (新用户可直接用 smb://${LOCAL_IP}/<新用户名> 连接其专属空间)"
     echo "========================================================"
     echo ""
 }
@@ -814,7 +798,7 @@ function do_uninstall {
 # 获取当前配置中的用户基目录
 function get_user_base_dir_from_conf {
     local dir
-    dir=$(grep -A 10 '\[private\]' /etc/samba/smb.conf 2>/dev/null | grep 'path =' | head -n 1 | awk '{print $3}' | sed 's|/%U||')
+    dir=$(grep -A 5 '\[homes\]' /etc/samba/smb.conf 2>/dev/null | grep 'path =' | head -n 1 | awk '{print $3}' | sed 's|/%S||')
     echo "${dir:-/data/users}"
 }
 
@@ -1008,4 +992,3 @@ case "$ACTION" in
         log error "未知命令: $ACTION。使用 '$0 help' 查看帮助。"
         ;;
 esac
-
