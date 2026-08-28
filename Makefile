@@ -512,6 +512,7 @@ list-scripts: ## List all available scripts in repository
 
 clean: ## Clean temporary files and logs
 	@printf "$(BLUE)Cleaning temporary files...$(NC)\n"
+	@rm -rf logs 2>/dev/null || true
 	@find . -name "*.log" -type f -delete 2>/dev/null || true
 	@find . -name "*.tmp" -type f -delete 2>/dev/null || true
 	@find . -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true

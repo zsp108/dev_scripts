@@ -10,8 +10,15 @@
 set -e
 set -o pipefail
 
-SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/" && pwd -P)"
-logfile="$SCRIPT_ROOT/init.log"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
+if [ -d "$SCRIPT_DIR/../scripts" ]; then
+    PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd -P)"
+else
+    PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+fi
+LOG_DIR="$PROJECT_ROOT/logs"
+mkdir -p "$LOG_DIR" 2>/dev/null || LOG_DIR="/tmp"
+logfile="${LOG_DIR}/$(basename "${BASH_SOURCE[0]}" .sh).log"
 
 DOWNLOAD_ROOT="/data/downloads"
 LISTEN_PORT="80"
