@@ -79,19 +79,24 @@ jobs:
         run: sudo make install-go GO_VERSION=1.23.2
 
       - name: Verify Go environment
-        run: make check
+        run: |
+          export PATH=/root/go/go1.23.2/bin:$HOME/go/go1.23.2/bin:$PATH
+          make check
 
       - name: Install Protobuf
-        run: ./scripts/protobuf_install.sh v25.3 v1.5.2
+        run: sudo ./scripts/protobuf_install.sh v25.3 v1.5.2
+
+      - name: Verify Protobuf
+        run: protoc --version
 
       - name: Install vim-go environment
         run: ./scripts/vim_go_install.sh
 
       - name: Uninstall Protobuf
-        run: ./scripts/protobuf_install.sh uninstall
+        run: sudo ./scripts/protobuf_install.sh uninstall
 
       - name: Uninstall Go environment
-        run: sudo make uninstall-go 1.23.2
+        run: sudo make uninstall-go GO_VERSION=1.23.2
 
       - name: Final environment clean verification
         run: make check
@@ -131,38 +136,38 @@ jobs:
           BRANCH_NAME="${{ github.ref_name }}"
 
           cat << 'REPORT_EOF' > summary.md
-          # 🚀 Dev Scripts CI 全矩阵测试汇总报告
+# 🚀 Dev Scripts CI 全矩阵测试汇总报告
 
-          REPORT_EOF
+REPORT_EOF
 
           cat << EOF >> summary.md
-          > **分支 (Branch)**: \`$BRANCH_NAME\` | **提交 (Commit)**: \`$COMMIT_SHORT\` ($COMMIT_MSG)  
-          > **整体执行状态**: **$OVERALL_STATUS**
+> **分支 (Branch)**: \`$BRANCH_NAME\` | **提交 (Commit)**: \`$COMMIT_SHORT\` ($COMMIT_MSG)  
+> **整体执行状态**: **$OVERALL_STATUS**
 
-          ---
+---
 
-          ### 📋 测试阶段与架构矩阵详情
+### 📋 测试阶段与架构矩阵详情
 
-          | 测试阶段 (Job) | 目标架构与运行环境 | 测试内容 | 状态 |
-          | :--- | :--- | :--- | :---: |
-          | 🔍 **代码与语法自检** | \`Ubuntu 24.04\` (x86_64) | Gitlint 规范校验 + 16 个脚本 \`bash -n\` 全量语法检测 + \`list\` 版本查询 | $(get_badge "$LINT_RES") |
-          | 🐧 **Linux x86_64 原生矩阵** | \`Ubuntu 24.04\` (x86_64) | 官方 Linux x86 语法与环境检测 | $(get_badge "$MATRIX_RES") |
-          | 🚀 **Linux ARM64 原生矩阵** | \`Ubuntu 24.04 ARM\` (aarch64) | 原生 ARM 硬件架构语法与环境兼容性 | $(get_badge "$MATRIX_RES") |
-          | 🍎 **macOS Apple Silicon** | \`macOS 14+\` (Apple M-Series) | macOS Darwin 环境与 Homebrew 兼容性 | $(get_badge "$MATRIX_RES") |
-          | 🔄 **工具链生命周期闭环** | \`Ubuntu 24.04\` (x86_64) | Go / Protobuf / Vim-go 安装 ➔ 验证 ➔ 卸载清理闭环 | $(get_badge "$LIFECYCLE_RES") |
+| 测试阶段 (Job) | 目标架构与运行环境 | 测试内容 | 状态 |
+| :--- | :--- | :--- | :---: |
+| 🔍 **代码与语法自检** | \`Ubuntu 24.04\` (x86_64) | Gitlint 规范校验 + 16 个脚本 \`bash -n\` 全量语法检测 + \`list\` 版本查询 | $(get_badge "$LINT_RES") |
+| 🐧 **Linux x86_64 原生矩阵** | \`Ubuntu 24.04\` (x86_64) | 官方 Linux x86 语法与环境检测 | $(get_badge "$MATRIX_RES") |
+| 🚀 **Linux ARM64 原生矩阵** | \`Ubuntu 24.04 ARM\` (aarch64) | 原生 ARM 硬件架构语法与环境兼容性 | $(get_badge "$MATRIX_RES") |
+| 🍎 **macOS Apple Silicon** | \`macOS 14+\` (Apple M-Series) | macOS Darwin 环境与 Homebrew 兼容性 | $(get_badge "$MATRIX_RES") |
+| 🔄 **工具链生命周期闭环** | \`Ubuntu 24.04\` (x86_64) | Go / Protobuf / Vim-go 安装 ➔ 验证 ➔ 卸载清理闭环 | $(get_badge "$LIFECYCLE_RES") |
 
-          ---
+---
 
-          ### 📦 覆盖的自动化运维与开发脚本 (共 16 个)
+### 📦 覆盖的自动化运维与开发脚本 (共 16 个)
 
-          - 🧰 **基础开发工具**: \`go_install.sh\`、\`nodejs_install.sh\`、\`git_install.sh\`、\`protobuf_install.sh\`、\`vim_go_install.sh\`、\`gitlint_install.sh\`、\`env_init.sh\`
-          - 🌐 **服务与存储组件**: \`filebrowser_install.sh\`、\`samba_install.sh\`、\`nginx_download_install.sh\`、\`derper_install.sh\`
-          - 🐳 **容器引擎**: \`docker_install.sh\`
-          - ⚙️ **工具集**: \`tools/codex_switch.sh\`、\`tools/scan_ip.sh\`、\`tools/scan_ip2.sh\`、\`tools/v2ray_conf_setting.sh\`
+- 🧰 **基础开发工具**: \`go_install.sh\`、\`nodejs_install.sh\`、\`git_install.sh\`、\`protobuf_install.sh\`、\`vim_go_install.sh\`、\`gitlint_install.sh\`、\`env_init.sh\`
+- 🌐 **服务与存储组件**: \`filebrowser_install.sh\`、\`samba_install.sh\`、\`nginx_download_install.sh\`、\`derper_install.sh\`
+- 🐳 **容器引擎**: \`docker_install.sh\`
+- ⚙️ **工具集**: \`tools/codex_switch.sh\`、\`tools/scan_ip.sh\`、\`tools/scan_ip2.sh\`、\`tools/v2ray_conf_setting.sh\`
 
-          ---
-          *由 GitHub Actions 自动生成于 $(date -u '+%Y-%m-%d %H:%M:%S UTC')*
-          EOF
+---
+*由 GitHub Actions 自动生成于 $(date -u '+%Y-%m-%d %H:%M:%S UTC')*
+EOF
 
           cat summary.md >> $GITHUB_STEP_SUMMARY
 

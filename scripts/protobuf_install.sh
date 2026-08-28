@@ -133,17 +133,22 @@ log info "Protobuf 版本: $PROTOBUF_VERSION"
 log info "protoc-gen-go 版本: $PROTOC_GEN_GO_VERSION"
 
 install_dependencies() {
+    if command -v curl >/dev/null 2>&1 && command -v unzip >/dev/null 2>&1; then
+        log info "基础依赖 (curl, unzip) 已满足，跳过安装"
+        return 0
+    fi
+
     log info "安装必要解压依赖 (unzip / curl)..."
     case "$OS" in
         ubuntu|debian)
-            $SUDO apt-get update -y
-            $SUDO apt-get install -y curl unzip
+            $SUDO apt-get update -y || true
+            $SUDO apt-get install -y curl unzip || true
             ;;
         centos|rhel|rocky|almalinux|fedora)
             if command -v dnf >/dev/null 2>&1; then
-                $SUDO dnf install -y curl unzip
+                $SUDO dnf install -y curl unzip || true
             else
-                $SUDO yum install -y curl unzip
+                $SUDO yum install -y curl unzip || true
             fi
             ;;
         *)
