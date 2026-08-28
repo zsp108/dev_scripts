@@ -11,7 +11,6 @@ NODEJS_INSTALL_SCRIPT      := $(SCRIPTS_DIR)/nodejs_install.sh
 GITLINT_INSTALL_SCRIPT     := $(SCRIPTS_DIR)/gitlint_install.sh
 GIT_INSTALL_SCRIPT         := $(SCRIPTS_DIR)/git_install.sh
 DOCKER_INSTALL_SCRIPT      := $(SCRIPTS_DIR)/docker_install.sh
-DOCKER_UNINSTALL_SCRIPT    := $(SCRIPTS_DIR)/docker_uninstall.sh
 FILEBROWSER_INSTALL_SCRIPT := $(SCRIPTS_DIR)/filebrowser_install.sh
 SAMBA_INSTALL_SCRIPT       := $(SCRIPTS_DIR)/samba_install.sh
 NGINX_DOWNLOAD_SCRIPT      := $(SCRIPTS_DIR)/nginx_download_install.sh
@@ -294,11 +293,11 @@ install-docker: ## Install Docker Engine
 
 uninstall-docker: ## Completely uninstall Docker and container runtimes
 	@printf "$(YELLOW)Uninstalling Docker...$(NC)\n"
-	@if [ -f $(DOCKER_UNINSTALL_SCRIPT) ]; then \
-		chmod +x $(DOCKER_UNINSTALL_SCRIPT); \
-		sudo ./$(DOCKER_UNINSTALL_SCRIPT); \
+	@if [ -f $(DOCKER_INSTALL_SCRIPT) ]; then \
+		chmod +x $(DOCKER_INSTALL_SCRIPT); \
+		sudo ./$(DOCKER_INSTALL_SCRIPT) uninstall; \
 	else \
-		printf "$(RED)Error: Docker uninstall script not found at $(DOCKER_UNINSTALL_SCRIPT)$(NC)\n"; \
+		printf "$(RED)Error: Docker script not found at $(DOCKER_INSTALL_SCRIPT)$(NC)\n"; \
 		exit 1; \
 	fi
 
