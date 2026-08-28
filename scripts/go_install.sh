@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # 自动下载并安装 Golang
 # 用法：sudo ./go_install.sh 1.25.3

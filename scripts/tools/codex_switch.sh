@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # 统一配置目录
 CODEX_DIR="$HOME/.codex"

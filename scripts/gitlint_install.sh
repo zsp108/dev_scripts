@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # 自动下载并安装 gitlint commit message 校验工具
 # 用法：./go_install.sh 

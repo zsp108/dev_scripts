@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # 环境初始化脚本
 # - 配置工作目录 & 字符集

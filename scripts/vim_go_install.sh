@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # 自动安装 vim-go 插件及配套 Go 工具集
 # 用法：./vim_go_install.sh [vim_go_branch_or_tag]

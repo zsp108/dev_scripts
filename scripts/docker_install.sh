@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # 自动安装与卸载 Docker 及相关组件
 # 安装用法：sudo ./docker_install.sh [version] [channel] [data-root]

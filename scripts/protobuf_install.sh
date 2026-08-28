@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # 自动下载并编译安装 Protobuf 及 protoc-gen-go 插件
 # 用法：./protobuf_install.sh [protobuf_version] [protoc_gen_go_version]

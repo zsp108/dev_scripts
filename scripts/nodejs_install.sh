@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # 自动安装 Node.js LTS + npm + @openai/codex
 # Ubuntu/Debian 使用 setup_lts.x

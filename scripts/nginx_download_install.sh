@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # 安装并配置 Nginx 下载站点，自动生成下载目录 index.html
 # 用法：sudo ./nginx_download_install.sh [download-root] [listen-port]

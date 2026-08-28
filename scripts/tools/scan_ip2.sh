@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # --- 1. 参数与配置检查 ---
 if [ -z "$1" ]; then

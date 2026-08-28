@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # 自动下载并编译安装 Git
 # 用法：sudo ./git_install.sh [version]
