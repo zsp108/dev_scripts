@@ -22,7 +22,7 @@ ENV_INIT_SCRIPT            := $(SCRIPTS_DIR)/env_init.sh
 # Default versions and arguments
 GO_VERSION   ?= 1.25.3
 GIT_VERSION  ?= 2.42.0
-PB_VERSION   ?= v3.21.1
+PB_VERSION   ?= v25.3
 GEN_GO_VER   ?= v1.5.2
 
 # Gitlint configuration

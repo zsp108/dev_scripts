@@ -82,7 +82,7 @@ jobs:
         run: make check
 
       - name: Install Protobuf
-        run: ./scripts/protobuf_install.sh v3.21.1 v1.5.2
+        run: ./scripts/protobuf_install.sh v25.3 v1.5.2
 
       - name: Install vim-go environment
         run: ./scripts/vim_go_install.sh
