@@ -150,7 +150,16 @@ install_dependencies() {
         esac
     fi
 
-    # 专门检查 Go 环境
+    # 专门检查 Go 环境并自动探测可能路径
+    if ! command -v go >/dev/null 2>&1; then
+        for p in /usr/local/go/bin "$HOME"/go/go*/bin "$ORIGINAL_HOME"/go/go*/bin; do
+            if [ -x "$p/go" ]; then
+                export PATH="$p:$PATH"
+                break
+            fi
+        done
+    fi
+
     if ! command -v go >/dev/null 2>&1; then
         log error "未检测到 Go 环境！vim-go 依赖 Go 环境，请先安装 Go 后重试"
     else

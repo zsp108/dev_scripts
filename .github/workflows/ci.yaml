@@ -76,7 +76,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Go environment
-        run: sudo make install-go GO_VERSION=1.23.2
+        run: |
+          sudo make install-go GO_VERSION=1.23.2
+          echo "/root/go/go1.23.2/bin" >> $GITHUB_PATH
+          echo "$HOME/go/go1.23.2/bin" >> $GITHUB_PATH
+          echo "/usr/local/go/bin" >> $GITHUB_PATH
 
       - name: Verify Go environment
         run: |
