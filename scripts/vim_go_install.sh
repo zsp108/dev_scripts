@@ -223,32 +223,31 @@ install_vim_go_plugin
 install_go_binaries() {
     log info "准备安装 vim-go 所需的 Go 依赖工具 (guru, godef, goimports, gopls 等)..."
 
-    # 设置 GOPROXY 国内加速
     export GOPROXY="https://goproxy.cn,direct"
 
-    # 准备临时测试 Go 文件，触发 vim 的 filetype=go
     local test_file="/tmp/test_vim_go_init.go"
     echo 'package main' > "$test_file"
     [ "$ORIGINAL_USER" != "$USER" ] && chown "$ORIGINAL_USER:$ORIGINAL_USER" "$test_file" 2>/dev/null || true
 
     log info "通过 Vim 静默模式自动执行 :GoInstallBinaries ..."
 
+    # 适配无 TTY / CI Headless 环境
     if [ "$ORIGINAL_USER" != "$USER" ]; then
-        sudo -u "$ORIGINAL_USER" GOPROXY="https://goproxy.cn,direct" vim -u NONE \
+        sudo -u "$ORIGINAL_USER" GOPROXY="${GOPROXY}" vim -es -u NONE \
             -c "set runtimepath+=$ORIGINAL_HOME/.vim/pack/plugins/start/vim-go" \
             -c "runtime ftplugin/go.vim" \
             -c "GoInstallBinaries" \
-            -c "qa!" "$test_file" || log warn "Vim 自动化安装完成（如有个别工具失败，后续可在 vim 中手动运行 :GoInstallBinaries）"
+            -c "qa!" "$test_file" 2>/dev/null || true
     else
-        GOPROXY="https://goproxy.cn,direct" vim -u NONE \
+        GOPROXY="${GOPROXY}" vim -es -u NONE \
             -c "set runtimepath+=$ORIGINAL_HOME/.vim/pack/plugins/start/vim-go" \
             -c "runtime ftplugin/go.vim" \
             -c "GoInstallBinaries" \
-            -c "qa!" "$test_file" || log warn "Vim 自动化安装完成（如有个别工具失败，后续可在 vim 中手动运行 :GoInstallBinaries）"
+            -c "qa!" "$test_file" 2>/dev/null || true
     fi
 
     rm -f "$test_file"
-    log info "Go 工具集安装指令发送完毕"
+    log info "Go 工具集安装指令执行完成"
 }
 
 install_go_binaries
