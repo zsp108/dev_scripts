@@ -1,34 +1,38 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # 脚本名称: samba_install.sh
-# 描述:     Samba 自动化安装部署、多用户存储空间隔离与全平台挂载运维管理脚本
+# 描述:     Samba 自动化安装部署、自定义端口、多用户存储隔离与全平台挂载运维管理脚本
 # 适用系统: Debian 系列 (Ubuntu, Debian, Deepin, Mint, Kali 等)
 #           RedHat 系列 (RHEL, CentOS, Rocky Linux, AlmaLinux, Fedora, openEuler 等)
 #           Arch 系列 (Arch Linux, Manjaro) / Alpine Linux 等
 # 适用架构: x86_64 (amd64), aarch64 (arm64), armv7l, armhf, i386
 # 存储模型: 多用户严格存储隔离 (默认基目录: /personal/samba/<用户名>)
-# 跨端优化: macOS (Finder 侧边栏/Fruit 优化/即时推出/Avahi 广播)
-#           Windows (SMB2/3 高速传输/网络驱动器映射)
-#           Linux (CIFS 原生挂载/权限映射)
+# 端口支持: 支持自定义监听端口 (默认 445，支持任意自定义端口如 10445)
+# 跨端优化: macOS (Finder 侧边栏/Fruit 优化/即时推出/Avahi 自适应广播)
+#           Windows (SMB2/3 高速传输/网络驱动器映射/端口转发指引)
+#           Linux (CIFS 原生自定义端口挂载/权限映射)
 # 服务托管: 智能三级自适应探测 (systemctl ➔ service ➔ direct)
 #
 # 用法:
 #   1. 交互式运行 (自动提权):
 #      ./samba_install.sh
 #   2. 快速安装 (自动初始化配置并启动):
-#      sudo ./samba_install.sh install [共享根目录] [初始用户名] [初始密码]
-#      例如: sudo ./samba_install.sh install /personal/samba spz 123456
+#      sudo ./samba_install.sh install [共享根目录] [端口] [初始用户名] [初始密码]
+#      例如: sudo ./samba_install.sh install /personal/samba 445 spz 123456
+#      例如: sudo ./samba_install.sh install /personal/samba 10445 spz 123456
 #   3. 用户管理 (专属目录隔离 /personal/samba/<用户名>):
 #      sudo ./samba_install.sh adduser [用户名] [密码] [专属根目录]
 #      sudo ./samba_install.sh deluser [用户名]
 #      sudo ./samba_install.sh lsusers
 #      sudo ./samba_install.sh passwd [用户名] [新密码]
-#   4. 服务管理:
+#   4. 端口管理:
+#      sudo ./samba_install.sh setport [新端口号]
+#   5. 服务管理:
 #      sudo ./samba_install.sh start|stop|restart|status
 #      sudo ./samba_install.sh service register|unregister
-#   5. 查看挂载指南:
+#   6. 查看挂载指南:
 #      sudo ./samba_install.sh guide [用户名]
-#   6. 完全卸载:
+#   7. 完全卸载:
 #      sudo ./samba_install.sh uninstall
 # ==============================================================================
 
@@ -38,6 +42,7 @@ SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 logfile="${SCRIPT_ROOT}/samba_install.log"
 
 DEFAULT_BASE_DIR="/personal/samba"
+DEFAULT_PORT="445"
 SMB_CONF="/etc/samba/smb.conf"
 AVAHI_DIR="/etc/avahi/services"
 AVAHI_CONF="${AVAHI_DIR}/samba.service"
@@ -176,6 +181,13 @@ function get_base_share_dir {
     echo "${dir:-$DEFAULT_BASE_DIR}"
 }
 
+# 从当前 smb.conf 获取当前监听端口 (默认 445)
+function get_current_port {
+    local p
+    p=$(grep -E '^\s*smb ports\s*=' "$SMB_CONF" 2>/dev/null | awk -F'=' '{print $2}' | awk '{print $1}' || true)
+    echo "${p:-$DEFAULT_PORT}"
+}
+
 # 安装依赖与 Samba 软件包
 function install_packages {
     log info "正在检查并安装 Samba 及 Bonjour 广播依赖包..."
@@ -206,19 +218,20 @@ function install_packages {
     log info "Samba 与 Bonjour 相关软件包安装完成。"
 }
 
-# 配置 macOS Bonjour (mDNS / Avahi) 网络广播
+# 配置 macOS Bonjour (mDNS / Avahi) 网络广播 (动态绑定自定义端口)
 function configure_avahi {
-    log info "正在配置 macOS 访达 / Windows 局域网 Bonjour (mDNS / Avahi) 网络广播..."
+    local port="${1:-$DEFAULT_PORT}"
+    log info "正在配置 macOS 访达 / Windows 局域网 Bonjour (mDNS / Avahi) 广播 (端口: $port)..."
 
     mkdir -p "$AVAHI_DIR"
-    cat << 'EOF_AVAHI' > "$AVAHI_CONF"
+    cat << EOF_AVAHI > "$AVAHI_CONF"
 <?xml version="1.0" standalone="no"?>
 <!DOCTYPE service-group SYSTEM "avahi-service.dtd">
 <service-group>
   <name replace-wildcards="yes">%h (Samba)</name>
   <service>
     <type>_smb._tcp</type>
-    <port>445</port>
+    <port>$port</port>
   </service>
   <service>
     <type>_device-info._tcp</type>
@@ -245,33 +258,36 @@ EOF_AVAHI
         ufw allow 5353/udp >/dev/null 2>&1 || true
     fi
 
-    log info "macOS Bonjour 广播服务配置完成 (Avahi 运行中)。"
+    log info "macOS Bonjour 广播服务配置完成 (Avahi 运行中，广播端口: $port)。"
 }
 
-# 配置防火墙规则
+# 配置防火墙规则 (支持自定义端口放行)
 function configure_firewall {
-    log info "正在检查并配置防火墙放行规则..."
+    local port="${1:-$DEFAULT_PORT}"
+    log info "正在检查并配置防火墙放行规则 (Samba 端口: $port)..."
 
     if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
         firewall-cmd --permanent --add-service=samba >/dev/null 2>&1 || true
+        firewall-cmd --permanent --add-port="${port}/tcp" >/dev/null 2>&1 || true
         firewall-cmd --reload >/dev/null 2>&1 || true
-        log info "已在 firewalld 中放行 Samba 服务规则。"
+        log info "已在 firewalld 中放行端口: ${port}/tcp 与 samba 服务。"
     fi
 
     if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qw "active"; then
-        ufw allow samba >/dev/null 2>&1 || {
-            ufw allow 137/udp >/dev/null 2>&1 || true
-            ufw allow 138/udp >/dev/null 2>&1 || true
-            ufw allow 139/tcp >/dev/null 2>&1 || true
-            ufw allow 445/tcp >/dev/null 2>&1 || true
-        }
-        log info "已在 ufw 中放行 Samba 规则。"
+        ufw allow "${port}/tcp" >/dev/null 2>&1 || true
+        ufw allow 137/udp >/dev/null 2>&1 || true
+        ufw allow 138/udp >/dev/null 2>&1 || true
+        ufw allow 139/tcp >/dev/null 2>&1 || true
+        ufw allow 445/tcp >/dev/null 2>&1 || true
+        log info "已在 ufw 中放行端口: ${port}/tcp 与相关规则。"
     fi
 }
 
 # 配置 SELinux 安全策略
 function configure_selinux {
     local target_dir="$1"
+    local port="${2:-$DEFAULT_PORT}"
+
     if command -v getenforce >/dev/null 2>&1; then
         local selinux_status
         selinux_status=$(getenforce)
@@ -280,6 +296,12 @@ function configure_selinux {
             setsebool -P samba_enable_home_dirs on >/dev/null 2>&1 || true
             setsebool -P samba_export_all_rw on >/dev/null 2>&1 || true
             
+            # 放行自定义端口 SELinux 端口类型
+            if [ "$port" != "445" ] && command -v semanage >/dev/null 2>&1; then
+                semanage port -a -t smbd_port_t -p tcp "$port" 2>/dev/null || \
+                semanage port -m -t smbd_port_t -p tcp "$port" 2>/dev/null || true
+            fi
+
             if [ -n "$target_dir" ] && [ -d "$target_dir" ]; then
                 if command -v semanage >/dev/null 2>&1; then
                     semanage fcontext -a -t samba_share_t "${target_dir}(/.*)?" >/dev/null 2>&1 || true
@@ -293,10 +315,11 @@ function configure_selinux {
     fi
 }
 
-# 初始化 /etc/samba/smb.conf 全局模板 (集成 macOS Fruit、Windows SMB2/3 与 Linux 深度优化)
+# 初始化 /etc/samba/smb.conf 全局模板 (支持自定义端口、macOS Fruit、Windows SMB2/3 与 Linux 深度优化)
 function init_smb_global_conf {
+    local port="${1:-$DEFAULT_PORT}"
     local backup_conf="/etc/samba/smb.conf.bak.$(date +%Y%m%d%H%M%S)"
-    log info "正在生成 Samba 全局基础配置 ($SMB_CONF)..."
+    log info "正在生成 Samba 全局基础配置 ($SMB_CONF，监听端口: $port)..."
 
     mkdir -p /etc/samba
     if [ -f "$SMB_CONF" ]; then
@@ -304,7 +327,7 @@ function init_smb_global_conf {
         log info "已备份原配置文件到: $backup_conf"
     fi
 
-    cat << 'EOF_SMB' > "$SMB_CONF"
+    cat << EOF_SMB > "$SMB_CONF"
 # ==============================================================================
 # Universal Multi-User Isolated Samba Configuration
 # ==============================================================================
@@ -316,6 +339,9 @@ function init_smb_global_conf {
     security = user
     map to guest = Bad User
     dns proxy = no
+
+    # 监听端口配置 (自定义端口)
+    smb ports = $port
 
     # 协议与传输性能优化 (全平台高速读写)
     min protocol = SMB2
@@ -353,6 +379,54 @@ function init_smb_global_conf {
 EOF_SMB
 
     log info "Samba 全局基础配置写入完成。"
+}
+
+# 修改/设置 Samba 监听端口
+function do_setport {
+    local new_port="$1"
+    local current_port
+    current_port="$(get_current_port)"
+
+    if [ -z "$new_port" ]; then
+        echo -n "请输入新的 Samba 监听端口号 [当前: ${current_port}]: "
+        read -r new_port
+    fi
+
+    if [ -z "$new_port" ]; then
+        log warn "未输入端口号，保持当前端口不变: $current_port"
+        return 0
+    fi
+
+    # 校验端口格式 (1-65535)
+    if ! [[ "$new_port" =~ ^[0-9]+$ ]] || [ "$new_port" -lt 1 ] || [ "$new_port" -gt 65535 ]; then
+        log error "无效的端口号: $new_port (端口范围必须在 1-65535 之间)！"
+    fi
+
+    log info "正在将 Samba 监听端口从 [$current_port] 修改为 [$new_port]..."
+
+    if [ ! -f "$SMB_CONF" ]; then
+        log error "配置文件不存在 ($SMB_CONF)，请先安装初始化 Samba！"
+    fi
+
+    # 修改 smb.conf 中的 smb ports
+    if grep -q "^\s*smb ports\s*=" "$SMB_CONF"; then
+        sed -i "s/^\s*smb ports\s*=.*/    smb ports = ${new_port}/" "$SMB_CONF"
+    else
+        sed -i "/\[global\]/a \    smb ports = ${new_port}" "$SMB_CONF"
+    fi
+
+    # 更新 Avahi 广播端口与防火墙
+    configure_avahi "$new_port"
+    configure_firewall "$new_port"
+    local base_dir
+    base_dir="$(get_base_share_dir)"
+    configure_selinux "$base_dir" "$new_port"
+
+    # 重启服务
+    service_control restart
+
+    log info "✅ Samba 端口已成功切换为: $new_port"
+    print_mount_guide
 }
 
 # 注册/追加单个用户的专属隔离存储目录 (/personal/samba/<用户名>)
@@ -637,16 +711,18 @@ function service_control {
             fi
             ;;
         status)
-            log info "检查 Samba 服务运行状态:"
+            local current_port
+            current_port="$(get_current_port)"
+            log info "检查 Samba 服务运行状态 (监听端口: $current_port):"
             if [ "$mgr" = "systemd" ]; then
                 if systemctl is-active --quiet "${UNIFIED_SERVICE_NAME}" 2>/dev/null || systemctl is-active --quiet "$SYS_SERVICE_NAME" 2>/dev/null; then
-                    echo -e "  \033[32m● Samba 服务正在运行 (systemd: active)\033[0m"
+                    echo -e "  \033[32m● Samba 服务正在运行 (systemd: active | 端口: ${current_port})\033[0m"
                 else
                     echo -e "  \033[31m● Samba 服务未运行\033[0m"
                 fi
             else
                 if pidof smbd >/dev/null 2>&1; then
-                    echo -e "  \033[32m● Samba 服务正在运行 (PID: $(pidof smbd | tr '\n' ' '))\033[0m"
+                    echo -e "  \033[32m● Samba 服务正在运行 (PID: $(pidof smbd | tr '\n' ' ') | 端口: ${current_port})\033[0m"
                 else
                     echo -e "  \033[31m● Samba 服务未运行\033[0m"
                 fi
@@ -658,29 +734,51 @@ function service_control {
 # 打印多端挂载连接指南
 function print_mount_guide {
     local target_user="${1:-<用户名>}"
+    local port
+    port="$(get_current_port)"
     get_local_ip
 
     echo ""
     echo -e "\033[36m==============================================================================\033[0m"
-    echo -e "\033[32m  🎉 全平台客户端连接与挂载指南 (服务器 IP: ${LOCAL_IP} | 专属用户: ${target_user})\033[0m"
+    echo -e "\033[32m  🎉 全平台客户端连接与挂载指南 (IP: ${LOCAL_IP} | 端口: ${port} | 用户: ${target_user})\033[0m"
     echo -e "\033[36m==============================================================================\033[0m"
     echo -e "\033[33m🍏 1. macOS 访达 (Finder) 挂载:\033[0m"
     echo -e "   • 打开访达，按快捷键 \033[32m⌘ + K\033[0m (或顶部菜单: 前往 ➔ 连接服务器)"
-    echo -e "   • 服务器地址输入: \033[36msmb://${LOCAL_IP}/${target_user}\033[0m"
+    if [ "$port" = "445" ]; then
+        echo -e "   • 服务器地址输入: \033[36msmb://${LOCAL_IP}/${target_user}\033[0m"
+    else
+        echo -e "   • 服务器地址输入 (带自定义端口): \033[36msmb://${LOCAL_IP}:${port}/${target_user}\033[0m"
+    fi
     echo -e "   • 选择「注册用户」，输入用户名 \033[32m${target_user}\033[0m 和对应密码即可。"
-    echo -e "   • \033[35m(已配置 Bonjour/Avahi，访达侧边栏'网络/位置'亦可直接双击服务器发现并推出)\033[0m"
+    echo -e "   • \033[35m(已配置 Bonjour/Avahi 自动广播端口，访达侧边栏'网络/位置'可直接双击发现与推出)\033[0m"
     echo ""
     echo -e "\033[33m🪟 2. Windows 资源管理器挂载:\033[0m"
-    echo -e "   • 打开文件资源管理器地址栏 (或按 \033[32mWin + R\033[0m)，输入: \033[36m\\\\${LOCAL_IP}\\${target_user}\033[0m"
-    echo -e "   • 映射为本地网络驱动器 (命令行执行):"
-    echo -e "     \033[32mnet use Z: \\\\${LOCAL_IP}\\${target_user} /user:${target_user} <密码> /persistent:yes\033[0m"
+    if [ "$port" = "445" ]; then
+        echo -e "   • 打开文件资源管理器地址栏 (或按 \033[32mWin + R\033[0m)，输入: \033[36m\\\\${LOCAL_IP}\\${target_user}\033[0m"
+        echo -e "   • 映射为本地网络驱动器 (CMD 执行):"
+        echo -e "     \033[32mnet use Z: \\\\${LOCAL_IP}\\${target_user} /user:${target_user} <密码> /persistent:yes\033[0m"
+    else
+        echo -e "   • \033[31m[注意]\033[0m Windows 资源管理器原生仅直连 445 端口。连接自定义端口 [${port}] 推荐方式:"
+        echo -e "     \033[32m① 本地端口转发 (以管理员身份打开 CMD 执行):\033[0m"
+        echo -e "        netsh interface portproxy add v4tov4 listenaddress=127.0.0.1 listenport=445 connectaddress=${LOCAL_IP} connectport=${port}"
+        echo -e "        然后按 Win + R 输入: \033[36m\\\\127.0.0.1\\${target_user}\033[0m 即可无缝访问！"
+        echo -e "     \033[32m② 或使用第三方挂载工具 (如 RaiDrive / Cyberduck)，在界面中指定端口 ${port} 挂载。\033[0m"
+    fi
     echo ""
     echo -e "\033[33m🐧 3. Linux 系统客户端挂载 (CIFS):\033[0m"
     echo -e "   • 临时挂载命令:"
     echo -e "     \033[32msudo mkdir -p /mnt/samba_${target_user}\033[0m"
-    echo -e "     \033[32msudo mount -t cifs //${LOCAL_IP}/${target_user} /mnt/samba_${target_user} -o username=${target_user},password=<密码>,uid=\$(id -u),gid=\$(id -g),iocharset=utf8\033[0m"
+    if [ "$port" = "445" ]; then
+        echo -e "     \033[32msudo mount -t cifs //${LOCAL_IP}/${target_user} /mnt/samba_${target_user} -o username=${target_user},password=<密码>,uid=\$(id -u),gid=\$(id -g),iocharset=utf8\033[0m"
+    else
+        echo -e "     \033[32msudo mount -t cifs //${LOCAL_IP}/${target_user} /mnt/samba_${target_user} -o port=${port},username=${target_user},password=<密码>,uid=\$(id -u),gid=\$(id -g),iocharset=utf8\033[0m"
+    fi
     echo -e "   • 开机自动挂载 (/etc/fstab 追加):"
-    echo -e "     \033[32m//${LOCAL_IP}/${target_user}  /mnt/samba_${target_user}  cifs  username=${target_user},password=<密码>,uid=\$(id -u),gid=\$(id -g),iocharset=utf8,_netdev  0  0\033[0m"
+    if [ "$port" = "445" ]; then
+        echo -e "     \033[32m//${LOCAL_IP}/${target_user}  /mnt/samba_${target_user}  cifs  username=${target_user},password=<密码>,uid=\$(id -u),gid=\$(id -g),iocharset=utf8,_netdev  0  0\033[0m"
+    else
+        echo -e "     \033[32m//${LOCAL_IP}/${target_user}  /mnt/samba_${target_user}  cifs  port=${port},username=${target_user},password=<密码>,uid=\$(id -u),gid=\$(id -g),iocharset=utf8,_netdev  0  0\033[0m"
+    fi
     echo -e "\033[36m==============================================================================\033[0m"
     echo ""
 }
@@ -688,17 +786,25 @@ function print_mount_guide {
 # 完整安装流程
 function do_install {
     local base_dir="${1:-$DEFAULT_BASE_DIR}"
-    local init_user="${2:-}"
-    local init_pass="${3:-}"
+    local port="${2:-$DEFAULT_PORT}"
+    local init_user="${3:-}"
+    local init_pass="${4:-}"
+
+    # 如果第2个参数不是纯数字（用户可能省略了端口直接传入用户名），则自动修正
+    if ! [[ "$port" =~ ^[0-9]+$ ]]; then
+        init_pass="$init_user"
+        init_user="$port"
+        port="$DEFAULT_PORT"
+    fi
 
     log info "开始自动化部署 Samba 文件服务器..."
-    log info "设置共享根基目录为: $base_dir"
+    log info "设置共享根基目录为: $base_dir | 监听端口: $port"
 
     install_packages
-    configure_avahi
-    init_smb_global_conf
-    configure_firewall
-    configure_selinux "$base_dir"
+    configure_avahi "$port"
+    init_smb_global_conf "$port"
+    configure_firewall "$port"
+    configure_selinux "$base_dir" "$port"
     register_service
     service_control start
 
@@ -710,7 +816,7 @@ function do_install {
         print_mount_guide
     fi
 
-    log info "✅ Samba 服务端自动化安装与配置全部完成！"
+    log info "✅ Samba 服务端自动化安装与配置全部完成 (端口: $port)！"
 }
 
 # 添加用户流程
@@ -800,22 +906,25 @@ function main_menu {
         get_local_ip
         local base_dir
         base_dir="$(get_base_share_dir)"
+        local current_port
+        current_port="$(get_current_port)"
 
         echo ""
         echo -e "\033[36m==============================================================================\033[0m"
-        echo -e "\033[32m        Samba 多用户隔离共享管理面板 (IP: ${LOCAL_IP})\033[0m"
+        echo -e "\033[32m        Samba 多用户隔离共享管理面板 (IP: ${LOCAL_IP} | 端口: ${current_port})\033[0m"
         echo -e "\033[36m==============================================================================\033[0m"
-        echo -e "  \033[33m1)\033[0m 安装并初始化 Samba (默认根目录: ${DEFAULT_BASE_DIR})"
+        echo -e "  \033[33m1)\033[0m 安装并初始化 Samba (默认根目录: ${DEFAULT_BASE_DIR} | 默认端口: ${DEFAULT_PORT})"
         echo -e "  \033[33m2)\033[0m 添加专属隔离用户 (自动分配 /personal/samba/<用户名>)"
         echo -e "  \033[33m3)\033[0m 修改用户密码"
         echo -e "  \033[33m4)\033[0m 查看所有已配置用户"
         echo -e "  \033[33m5)\033[0m 删除用户权限"
-        echo -e "  \033[33m6)\033[0m 服务状态与启停管理"
-        echo -e "  \033[33m7)\033[0m 查看全平台挂载指南 (macOS / Windows / Linux)"
-        echo -e "  \033[33m8)\033[0m 彻底卸载 Samba 服务"
+        echo -e "  \033[33m6)\033[0m 修改 Samba 监听端口 (当前: \033[36m${current_port}\033[0m)"
+        echo -e "  \033[33m7)\033[0m 服务状态与启停管理"
+        echo -e "  \033[33m8)\033[0m 查看全平台挂载指南 (macOS / Windows / Linux)"
+        echo -e "  \033[33m9)\033[0m 彻底卸载 Samba 服务"
         echo -e "  \033[33m0)\033[0m 退出"
         echo -e "\033[36m==============================================================================\033[0m"
-        echo -n "请输入操作选项 [0-8]: "
+        echo -n "请输入操作选项 [0-9]: "
         read -r choice
 
         case "$choice" in
@@ -823,6 +932,9 @@ function main_menu {
                 echo -n "请输入共享根目录 [回车默认 ${DEFAULT_BASE_DIR}]: "
                 read -r input_dir
                 input_dir="${input_dir:-$DEFAULT_BASE_DIR}"
+                echo -n "请输入 Samba 监听端口 [回车默认 ${DEFAULT_PORT}]: "
+                read -r input_port
+                input_port="${input_port:-$DEFAULT_PORT}"
                 echo -n "请输入初始用户名 (可留空跳过): "
                 read -r init_u
                 init_p=""
@@ -830,7 +942,7 @@ function main_menu {
                     echo -n "请输入初始用户密码: "
                     read -r init_p
                 fi
-                do_install "$input_dir" "$init_u" "$init_p"
+                do_install "$input_dir" "$input_port" "$init_u" "$init_p"
                 ;;
             2)
                 do_adduser "" ""
@@ -845,6 +957,9 @@ function main_menu {
                 do_deluser ""
                 ;;
             6)
+                do_setport ""
+                ;;
+            7)
                 echo "  a) 启动服务   b) 停止服务   c) 重启服务   d) 查看状态"
                 echo -n "  请选择服务操作 [a-d]: "
                 read -r s_opt
@@ -855,12 +970,12 @@ function main_menu {
                     d|status|*) service_control status ;;
                 esac
                 ;;
-            7)
+            8)
                 echo -n "请输入要查询指南的用户名 [回车默认显示通用]: "
                 read -r q_user
                 print_mount_guide "$q_user"
                 ;;
-            8)
+            9)
                 echo -n "确认要彻底卸载 Samba 吗? [y/N]: "
                 read -r confirm
                 if [[ "$confirm" =~ ^[Yy]$ ]]; then
@@ -891,7 +1006,7 @@ ACTION="${1:-}"
 
 case "$ACTION" in
     install|-i|--install)
-        do_install "$2" "$3" "$4"
+        do_install "$2" "$3" "$4" "$5"
         ;;
     uninstall|-u|--uninstall)
         do_uninstall
@@ -933,14 +1048,18 @@ case "$ACTION" in
     passwd|setpasswd)
         do_passwd "$2" "$3"
         ;;
+    setport|port)
+        do_setport "$2"
+        ;;
     guide|mount)
         print_mount_guide "$2"
         ;;
     help|-h|--help)
         echo "用法:"
         echo "  sudo $0                                            # 交互式菜单"
-        echo "  sudo $0 install [根目录] [用户名] [密码]             # 一键完整安装部署"
+        echo "  sudo $0 install [根目录] [端口] [用户名] [密码]      # 一键完整安装部署 (支持自定义端口)"
         echo "  sudo $0 adduser [用户名] [密码] [根目录]             # 添加多用户隔离空间"
+        echo "  sudo $0 setport [新端口号]                          # 修改 Samba 监听端口"
         echo "  sudo $0 lsusers                                    # 查看所有已配置用户"
         echo "  sudo $0 passwd [用户名] [新密码]                     # 修改用户密码"
         echo "  sudo $0 deluser [用户名]                            # 删除用户权限"
