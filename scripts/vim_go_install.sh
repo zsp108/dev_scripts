@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
-# 自动安装 vim-go 插件及配套 Go 工具集
-# 用法：./vim_go_install.sh [vim_go_branch_or_tag]
-# 示例：sudo ./vim_go_install.sh master
+# 自动安装与配置 vim-go 插件及 Go 开发工具环境
+# 用法:
+#   ./vim_go_install.sh [分支或Tag]   # 安装 vim-go (默认: master)
+#   ./vim_go_install.sh uninstall    # 卸载 vim-go 并清理配置
 
 set -e
 
@@ -22,35 +23,35 @@ function log {
     local logtype
     logtype=$1
     msg=$2
-    datetime=`date +'%F %H:%M:%S'`
+    datetime=$(date +'%F %H:%M:%S')
     logformat="${datetime} ${FUNCNAME[@]/log/} [line:${BASH_LINENO[0]}] ${logtype}:${msg}"
     {
     case $logtype in
         debug)
             echo "${logformat}" >> "$logfile" 2>&1;;
         info)
-            echo -e "\033[32m $datetime [info] ${msg} \t \033[0m"
+            echo -e "[32m $datetime [info] ${msg} 	 [0m"
             echo "${logformat}" >> "$logfile" 2>&1;;
         warn)
-            echo -e "\033[33m $datetime [WARN] ${msg} \t \033[0m"
+            echo -e "[33m $datetime [WARN] ${msg} 	 [0m"
             echo "${logformat}" >> "$logfile" 2>&1;;
         error)
-            echo -e "\033[31m $datetime [ERROR] ${msg} \033[0m"
+            echo -e "[31m $datetime [ERROR] ${msg} [0m"
             echo "${logformat}" >> "$logfile" 2>&1
             exit 1;;
     esac
     }
 }
 
-# 检查用户权限
+# 检查用户权限并设置 SUDO
 if [ "$EUID" -ne 0 ]; then
-    if ! sudo -n true 2>/dev/null; then
-        log warn "当前非 root 用户且无免密 sudo 权限，部分系统依赖安装可能受限"
+    if sudo -n true 2>/dev/null; then
+        SUDO="sudo"
     else
-        log info "检测到非 root 用户但有 sudo 权限，继续执行..."
+        SUDO="sudo"
     fi
 else
-    log info "检测到 root 用户执行，继续执行..."
+    SUDO=""
 fi
 
 # 获取原始用户信息（当使用 sudo 执行时）
@@ -135,14 +136,14 @@ install_dependencies() {
         case $OS in
             'rhel'|'centos'|'fedora'|'rocky'|'almalinux')
                 if command -v dnf >/dev/null 2>&1; then
-                    dnf install -y $need_install
+                    $SUDO dnf install -y $need_install || true
                 else
-                    yum install -y $need_install
+                    $SUDO yum install -y $need_install || true
                 fi
                 ;;
             'ubuntu'|'debian')
-                apt update -y
-                apt install -y $need_install
+                $SUDO apt-get update -y || true
+                $SUDO apt-get install -y $need_install || true
                 ;;
             *)
                 log warn "无法自动安装软件包:$need_install，请确保已手动安装"
@@ -152,7 +153,7 @@ install_dependencies() {
 
     # 专门检查 Go 环境并自动探测可能路径
     if ! command -v go >/dev/null 2>&1; then
-        for p in /usr/local/go/bin "$HOME"/go/go*/bin "$ORIGINAL_HOME"/go/go*/bin; do
+        for p in /usr/local/go/bin "$HOME"/go/go*/bin "$ORIGINAL_HOME"/go/go*/bin /root/go/go*/bin; do
             if [ -x "$p/go" ]; then
                 export PATH="$p:$PATH"
                 break
@@ -186,8 +187,13 @@ install_vim_go_plugin() {
     # 判断目录是否已存在
     if [ -d "$vim_go_target_dir" ]; then
         log info "检测到已存在 vim-go 插件目录"
-        read -p "是否删除并重新克隆安装 vim-go？(y/n): " is_reclone
-        if [[ "$is_reclone" == "y" ]]; then
+        local is_reclone="n"
+        if [ ! -t 0 ]; then
+            is_reclone="y"
+        else
+            read -p "是否删除并重新克隆安装 vim-go？(y/n): " is_reclone
+        fi
+        if [ "$is_reclone" = "y" ]; then
             rm -rf "$vim_go_target_dir"
             log info "已删除旧版 vim-go"
         else
@@ -261,7 +267,7 @@ configure_vimrc() {
         log info "$user_vimrc 已包含插件基础配置"
     else
         log info "添加 vim-go 推荐基础配置到 $user_vimrc ..."
-        cat << 'EOF' >> "$user_vimrc"
+        cat << 'VIMRC_EOF' >> "$user_vimrc"
 
 " --- Vim-Go 推荐基础配置 ---
 syntax on
@@ -269,7 +275,7 @@ filetype plugin indent on
 let g:go_fmt_command = "goimports"
 let g:go_autodetect_gopath = 1
 let g:go_list_type = "quickfix"
-EOF
+VIMRC_EOF
         [ "$ORIGINAL_USER" != "$USER" ] && chown "$ORIGINAL_USER:$ORIGINAL_USER" "$user_vimrc" 2>/dev/null || true
         log info "已成功更新 $user_vimrc"
     fi
@@ -282,7 +288,8 @@ log info "正在验证已安装的 Go 工具..."
 gopath_bin=$(sudo -u "$ORIGINAL_USER" go env GOPATH 2>/dev/null || go env GOPATH 2>/dev/null || echo "$ORIGINAL_HOME/go")/bin
 
 if [ -d "$gopath_bin" ]; then
-    installed_tools=$(ls "$gopath_bin" 2>/dev/null | tr '\n' ' ')
+    installed_tools=$(ls "$gopath_bin" 2>/dev/null | tr '
+' ' ')
     log info "已在 $gopath_bin 中检测到以下 Go 工具:"
     log info "$installed_tools"
 else
