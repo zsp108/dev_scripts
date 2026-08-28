@@ -37,12 +37,12 @@ CYAN   := \033[0;36m
 NC     := \033[0m # No Color
 
 .PHONY: help install setup check clean lint test docs \
-        install-go uninstall-go \
-        install-nodejs uninstall-nodejs \
-        install-git uninstall-git \
+        install-go uninstall-go list-go-versions \
+        install-nodejs uninstall-nodejs list-nodejs-versions \
+        install-git uninstall-git list-git-versions \
         install-docker uninstall-docker \
         install-gitlint uninstall-gitlint \
-        install-protobuf uninstall-protobuf \
+        install-protobuf uninstall-protobuf list-protobuf-versions \
         install-vim-go uninstall-vim-go \
         init-env clean-env \
         install-filebrowser uninstall-filebrowser \
@@ -59,11 +59,10 @@ help: ## Show this help message
 	@printf "$(CYAN)Available targets:$(NC)\n"
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  $(YELLOW)%-25s$(NC) %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 	@printf "\n$(CYAN)Usage Examples:$(NC)\n"
+	@printf "  make list-go-versions                  # List available Go versions\n"
 	@printf "  make install-go [GO_VERSION=1.25.3]    # Install Go\n"
 	@printf "  make uninstall-go                      # Uninstall Go\n"
 	@printf "  make install-filebrowser               # Install FileBrowser with multi-user isolation\n"
-	@printf "  make uninstall-filebrowser             # Uninstall FileBrowser service & data\n"
-	@printf "  make install-samba                     # Install Samba file sharing server\n"
 	@printf "  make check                             # Check all installed tools & services\n"
 	@printf "  make test                              # Validate syntax of all shell scripts\n"
 
@@ -74,6 +73,14 @@ install: install-go install-nodejs install-git install-docker install-gitlint ##
 
 setup: install ## Complete development environment setup
 	@printf "$(GREEN)✓ Development environment setup complete!$(NC)\n"
+
+list-go-versions: ## List available Go versions from official source
+	@if [ -f $(GO_INSTALL_SCRIPT) ]; then \
+		./$(GO_INSTALL_SCRIPT) list; \
+	else \
+		printf "$(RED)Error: Go install script not found at $(GO_INSTALL_SCRIPT)$(NC)\n"; \
+		exit 1; \
+	fi
 
 install-go: ## Install Go programming language (override via GO_VERSION=x.y.z)
 	@printf "$(BLUE)Installing Go $(GO_VERSION)...$(NC)\n"
@@ -92,6 +99,14 @@ uninstall-go: ## Uninstall Go environment and clean PATH configuration
 		sudo ./$(GO_INSTALL_SCRIPT) uninstall $(GO_VERSION); \
 	else \
 		printf "$(RED)Error: Go script not found at $(GO_INSTALL_SCRIPT)$(NC)\n"; \
+		exit 1; \
+	fi
+
+list-nodejs-versions: ## List Node.js LTS and current releases
+	@if [ -f $(NODEJS_INSTALL_SCRIPT) ]; then \
+		./$(NODEJS_INSTALL_SCRIPT) list; \
+	else \
+		printf "$(RED)Error: Node.js script not found at $(NODEJS_INSTALL_SCRIPT)$(NC)\n"; \
 		exit 1; \
 	fi
 
@@ -115,6 +130,14 @@ uninstall-nodejs: ## Uninstall Node.js and clean packages
 		exit 1; \
 	fi
 
+list-git-versions: ## List available Git release versions
+	@if [ -f $(GIT_INSTALL_SCRIPT) ]; then \
+		./$(GIT_INSTALL_SCRIPT) list; \
+	else \
+		printf "$(RED)Error: Git script not found at $(GIT_INSTALL_SCRIPT)$(NC)\n"; \
+		exit 1; \
+	fi
+
 install-git: ## Compile and install Git (override via GIT_VERSION=x.y.z)
 	@printf "$(BLUE)Installing Git $(GIT_VERSION)...$(NC)\n"
 	@if [ -f $(GIT_INSTALL_SCRIPT) ]; then \
@@ -132,6 +155,14 @@ uninstall-git: ## Uninstall compiled Git and clean PATH
 		sudo ./$(GIT_INSTALL_SCRIPT) uninstall; \
 	else \
 		printf "$(RED)Error: Git script not found at $(GIT_INSTALL_SCRIPT)$(NC)\n"; \
+		exit 1; \
+	fi
+
+list-protobuf-versions: ## List recommended Protobuf and protoc-gen-go versions
+	@if [ -f $(PROTOBUF_INSTALL_SCRIPT) ]; then \
+		./$(PROTOBUF_INSTALL_SCRIPT) list; \
+	else \
+		printf "$(RED)Error: Protobuf script not found at $(PROTOBUF_INSTALL_SCRIPT)$(NC)\n"; \
 		exit 1; \
 	fi
 
@@ -332,7 +363,7 @@ gitlint: ## Run gitlint on current commit message
 				printf "$(RED)Commit message validation failed!$(NC)\n"; \
 				printf "$(YELLOW)Expected format: <type>(<scope>): <description>$(NC)\n"; \
 				printf "$(YELLOW)Types: feat, fix, docs, style, refactor, test, chore, ci, perf$(NC)\n"; \
-				exit 1; \
+			exit 1; \
 			}; \
 			printf "$(GREEN)✓ Commit message validation passed!$(NC)\n"; \
 		else \
@@ -363,9 +394,9 @@ pre-commit: ## Install pre-commit hook for code quality checks
 	@printf "$(BLUE)Setting up pre-commit hook...$(NC)\n"
 	@echo "#!/bin/bash" > .git/hooks/pre-commit
 	@echo "# Pre-commit hook for code quality checks" >> .git/hooks/pre-commit
-	@echo "printf \"\033[0;34mRunning pre-commit checks...\033[0m\\n\"" >> .git/hooks/pre-commit
+	@echo "printf "\033[0;34mRunning pre-commit checks...\033[0m\\n"" >> .git/hooks/pre-commit
 	@echo "make gitlint || exit 1" >> .git/hooks/pre-commit
-	@echo "printf \"\033[0;32m✓ Pre-commit checks passed!\033[0m\\n\"" >> .git/hooks/pre-commit
+	@echo "printf "\033[0;32m✓ Pre-commit checks passed!\033[0m\\n"" >> .git/hooks/pre-commit
 	@chmod +x .git/hooks/pre-commit
 	@printf "$(GREEN)✓ Pre-commit hook installed$(NC)\n"
 

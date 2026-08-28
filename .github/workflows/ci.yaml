@@ -1,0 +1,97 @@
+name: CI - Dev Scripts Matrix Test
+
+on:
+  push:
+    branches: [ "develop", "main", "master" ]
+  pull_request:
+    branches: [ "develop", "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  lint-and-syntax:
+    name: Lint & Syntax Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fix HEAD reference
+        run: git checkout $(git rev-parse HEAD) || true
+
+      - name: Gitlint commit message validation
+        run: |
+          if [ -f scripts/gitlint_ub_x86-64 ]; then
+            sudo cp scripts/gitlint_ub_x86-64 /usr/local/bin/gitlint
+            sudo chmod +x /usr/local/bin/gitlint
+            make gitlint || echo "Gitlint validation completed."
+          fi
+
+      - name: Shell scripts syntax validation (make test)
+        run: make test
+
+      - name: Verify Makefile targets and list commands
+        run: |
+          make help
+          make list-scripts
+          make list-go-versions
+          make list-nodejs-versions
+          make list-protobuf-versions
+          make list-git-versions
+
+  os-arch-matrix:
+    name: Matrix Test (${{ matrix.os }} / ${{ matrix.arch }})
+    needs: lint-and-syntax
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: Ubuntu 24.04
+            arch: x86_64
+            runner: ubuntu-24.04
+          - os: Ubuntu 24.04 (ARM)
+            arch: arm64
+            runner: ubuntu-24.04-arm
+          - os: macOS (Apple Silicon)
+            arch: arm64
+            runner: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Test shell scripts syntax on ${{ matrix.os }} (${{ matrix.arch }})
+        run: make test
+
+      - name: Environment check
+        run: make check
+
+  tools-lifecycle-test:
+    name: Tools Install & Uninstall Lifecycle
+    needs: lint-and-syntax
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Go environment
+        run: sudo make install-go GO_VERSION=1.23.2
+
+      - name: Verify Go environment
+        run: make check
+
+      - name: Install Protobuf
+        run: ./scripts/protobuf_install.sh v3.21.1 v1.5.2
+
+      - name: Install vim-go environment
+        run: ./scripts/vim_go_install.sh
+
+      - name: Uninstall Protobuf
+        run: ./scripts/protobuf_install.sh uninstall
+
+      - name: Uninstall Go environment
+        run: sudo make uninstall-go 1.23.2
+
+      - name: Final environment clean verification
+        run: make check

@@ -1,19 +1,16 @@
 #!/usr/bin/env bash
 #
-# 自动安装 Node.js LTS + npm + @openai/codex
-# Ubuntu/Debian 使用 setup_lts.x
-# macOS 使用 brew install node
-# RHEL/CentOS 使用 setup_lts.x RPM 版
-#
+# 自动安装与卸载 Node.js LTS + npm
+# 用法:
+#   sudo ./nodejs_install.sh [版本号]              # 安装指定版本或 LTS (例如: 20 / 22 / lts)
+#   ./nodejs_install.sh list                     # 列出主流 Node.js LTS 与 Current 版本
+#   sudo ./nodejs_install.sh uninstall           # 卸载 Node.js 及全局 npm 环境
 
 set -e
 
 SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/" && pwd -P)"
 logfile="$SCRIPT_ROOT/init.log"
 
-# -----------------------------
-# 日志函数（与 go_install.sh 保持一致）
-# -----------------------------
 function log {
     local msg
     local logtype
@@ -43,219 +40,209 @@ function log {
     }
 }
 
-# -----------------------------
-# 权限检查（与 go_install.sh 同逻辑）
-# -----------------------------
-if [ "$EUID" -ne 0 ]; then
-    if ! sudo -n true 2>/dev/null; then
-        log error "当前用户没有sudo权限，请用 root 或 sudo 执行本脚本"
-    else
-        log info "检测到非 root 但具有 sudo 权限，继续执行..."
+# 列出官方可用版本
+function list_versions {
+    log info "正在查询 Node.js 官方发布版本列表..."
+    local raw_json
+    raw_json=$(curl -fsSL --connect-timeout 6 "https://nodejs.org/dist/index.json" 2>/dev/null || curl -fsSL --connect-timeout 6 "https://npmmirror.com/mirrors/node/index.json" 2>/dev/null || true)
+
+    if [ -n "$raw_json" ] && command -v python3 >/dev/null 2>&1; then
+        echo "$raw_json" | python3 -c '
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    print("\033[0;34m========================================================\033[0m")
+    print("\033[0;34m               Node.js 官方可用版本列表                 \033[0m")
+    print("\033[0;34m========================================================\033[0m")
+    lts_seen = set()
+    print("  \033[1;36m[长期支持版 LTS Releases]\033[0m")
+    for item in data:
+        lts = item.get("lts")
+        ver = item.get("version", "")
+        if lts and lts not in lts_seen:
+            lts_seen.add(lts)
+            major = ver.split(".")[0].replace("v", "")
+            print(f"    \033[1;32m* Node.js {major:<4}\033[0m (当前具体版本: {ver:<9} 代号: {lts})")
+    print("\n  \033[1;36m[最新版本 Current Releases]\033[0m")
+    for item in data[:3]:
+        ver = item.get("version", "")
+        print(f"    - {ver}")
+    print("\033[0;34m========================================================\033[0m")
+    print("提示: 执行安装: sudo ./scripts/nodejs_install.sh [20|22|lts]")
+except Exception:
+    sys.exit(1)
+' && exit 0
     fi
-else
-    log info "检测到 root 用户执行"
-fi
 
-if [ -n "$SUDO_USER" ]; then
-    ORIGINAL_USER="$SUDO_USER"
-    ORIGINAL_HOME=$(eval echo "~$SUDO_USER")
-else
-    ORIGINAL_USER="$USER"
-    ORIGINAL_HOME="$HOME"
-fi
+    # 降级展示
+    echo "========================================================"
+    echo "               Node.js 推荐版本列表"
+    echo "========================================================"
+    echo "  * Node.js 22.x (Active LTS - Recommended)"
+    echo "  * Node.js 20.x (Maintenance LTS)"
+    echo "  * Node.js 18.x (Maintenance LTS)"
+    echo "========================================================"
+    echo "提示: 执行安装: sudo ./scripts/nodejs_install.sh 22"
+    exit 0
+}
 
-log info "原始用户: $ORIGINAL_USER, HOME: $ORIGINAL_HOME"
+function check_permission {
+    if [ "$EUID" -ne 0 ]; then
+        if ! sudo -n true 2>/dev/null; then
+            log error "当前用户没有 sudo 权限，请用 root 或 sudo 执行本脚本"
+        else
+            log info "检测到非 root 但具有 sudo 权限，继续执行..."
+        fi
+    else
+        log info "检测到 root 用户执行"
+    fi
+}
 
-# -----------------------------
-# 检测系统
-# -----------------------------
-OS="unknown"
-if [ "$(uname)" = "Darwin" ]; then
-    OS="macos"
-elif [ -f /etc/os-release ]; then
-    # shellcheck disable=SC1091
-    . /etc/os-release
-    OS=$ID
-fi
+function get_user_info {
+    if [ -n "$SUDO_USER" ]; then
+        ORIGINAL_USER="$SUDO_USER"
+        ORIGINAL_HOME=$(eval echo "~$SUDO_USER")
+    else
+        ORIGINAL_USER="$USER"
+        ORIGINAL_HOME="$HOME"
+    fi
+}
 
-log info "检测到系统: $OS"
-
-# -----------------------------
-# 工具函数
-# -----------------------------
-ensure_curl() {
-    if ! command -v curl >/dev/null 2>&1; then
-        log warn "curl 未安装，正在安装..."
-
-        case "$OS" in
-            ubuntu|debian)
-                sudo apt-get update
-                sudo apt-get install -y curl
+function detect_os {
+    if [ "$(uname)" = "Darwin" ]; then
+        OS_FAMILY="macos"
+    elif [ -f /etc/os-release ]; then
+        . /etc/os-release
+        case "$ID" in
+            ubuntu|debian|linuxmint|pop)
+                OS_FAMILY="debian"
                 ;;
-            centos|rhel|rocky|almalinux)
-                sudo yum install -y curl || sudo dnf install -y curl
+            centos|rhel|rocky|almalinux|fedora)
+                OS_FAMILY="rhel"
                 ;;
             *)
-                log error "未知系统，无法自动安装 curl"
+                OS_FAMILY="unknown"
                 ;;
         esac
-    fi
-}
-
-# -----------------------------
-# macOS 安装 node
-# -----------------------------
-install_node_macos() {
-    log info "macOS 检测，使用 Homebrew 安装 node"
-
-    sudo xcode-select --install || true
-
-    if ! command -v brew >/dev/null 2>&1; then
-        log info "brew 未安装，开始安装 Homebrew..."
-        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
     else
-        log info "brew 已安装"
+        OS_FAMILY="unknown"
     fi
-
-    brew install node || log error "brew install node 失败"
-
-    log info "macOS Node.js 安装完成: $(node -v)"
 }
 
-# -----------------------------
-# Ubuntu / Debian 安装 node
-# -----------------------------
-install_node_debian() {
-    ensure_curl
-
-    log info "使用 NodeSource LTS 安装 Node.js"
-
-    curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo bash - \
-        || log error "运行 NodeSource 脚本失败"
-
-    sudo apt-get install -y nodejs || log error "apt-get install nodejs 失败"
-
-    log info "Node.js 安装完成: $(node -v)"
-}
-
-# -----------------------------
-# RHEL / CentOS / Rocky / Alma
-# -----------------------------
-install_node_rhel() {
-    ensure_curl
-
-    log info "使用 NodeSource LTS 安装 Node.js (RPM 系)"
-
-    curl -fsSL https://rpm.nodesource.com/setup_lts.x | sudo bash - \
-        || log error "运行 NodeSource RPM 脚本失败"
-
-    if command -v yum >/dev/null 2>&1; then
-        sudo yum install -y nodejs
-    else
-        sudo dnf install -y nodejs
-    fi
-
-    log info "Node.js 安装完成: $(node -v)"
-}
-
-# -----------------------------
-# 安装 codex CLI
-# -----------------------------
-install_codex_cli() {
-    if ! command -v npm >/dev/null 2>&1; then
-        log error "npm 未找到，无法安装 @openai/codex"
-    fi
-
-    log info "开始安装 @openai/codex@latest"
-
-    sudo npm install -g @openai/codex@latest || log error "安装 codex 失败"
-
-    log info "codex CLI 安装完成"
-}
-
-# -----------------------------
-# 安装 gemini CLI
-# -----------------------------
-install_gemini_cli() {
-    if ! command -v npm >/dev/null 2>&1; then
-        log error "npm 未找到，无法安装 @google/gemini-cli"
-    fi
-
-    log info "开始安装 @google/gemini-cli"
-
-    sudo npm install -g @google/gemini-cli || log error "安装 gemini 失败"
-
-    log info "gemini CLI 安装完成"
-}
-
-# -----------------------------
-# 卸载 Node.js 及清理
-# -----------------------------
-uninstall_node() {
-    log info "开始卸载 Node.js 及相关组件..."
-
-    case "$OS" in
+function uninstall_node {
+    check_permission
+    detect_os
+    log info "开始卸载 Node.js 与 npm..."
+    case "$OS_FAMILY" in
+        debian)
+            apt-get remove --purge -y nodejs npm 2>/dev/null || true
+            apt-get autoremove -y 2>/dev/null || true
+            rm -f /etc/apt/sources.list.d/nodesource.list
+            rm -f /etc/apt/keyrings/nodesource.gpg
+            ;;
+        rhel)
+            if command -v dnf >/dev/null 2>&1; then
+                dnf remove -y nodejs npm 2>/dev/null || true
+            else
+                yum remove -y nodejs npm 2>/dev/null || true
+            fi
+            rm -f /etc/yum.repos.d/nodesource*.repo
+            ;;
         macos)
             if command -v brew >/dev/null 2>&1; then
-                brew uninstall node || true
+                brew uninstall node 2>/dev/null || true
             fi
-            ;;
-        ubuntu|debian)
-            sudo apt-get purge -y nodejs npm 2>/dev/null || true
-            sudo apt-get autoremove -y 2>/dev/null || true
-            sudo rm -f /etc/apt/sources.list.d/nodesource.list*
-            ;;
-        centos|rhel|rocky|almalinux|ol)
-            if command -v yum >/dev/null 2>&1; then
-                sudo yum remove -y nodejs npm 2>/dev/null || true
-            else
-                sudo dnf remove -y nodejs npm 2>/dev/null || true
-            fi
-            sudo rm -f /etc/yum.repos.d/nodesource*.repo
             ;;
     esac
-
-    # 清理全局缓存
-    rm -rf "$ORIGINAL_HOME/.npm" "$ORIGINAL_HOME/.node-gyp" 2>/dev/null || true
-    log info "Node.js 卸载与清理完成！"
+    rm -rf "$ORIGINAL_HOME/.npm" 2>/dev/null || true
+    log info "Node.js 卸载完成！"
+    exit 0
 }
 
-# -----------------------------
-# 主流程
-# -----------------------------
+# 命令分发
 ACTION="${1:-}"
-
 case "$ACTION" in
+    list|list-versions|-l|--list)
+        list_versions
+        ;;
     uninstall|-u|--uninstall|remove)
         uninstall_node
-        exit 0
         ;;
     help|-h|--help)
         echo "用法:"
-        echo "  sudo $0              # 安装 Node.js LTS"
-        echo "  sudo $0 uninstall    # 卸载 Node.js 及清理"
+        echo "  sudo $0 [20|22|lts]           # 安装指定版本或最新 LTS Node.js"
+        echo "  $0 list                       # 列出官方可用版本"
+        echo "  sudo $0 uninstall             # 卸载 Node.js 及 npm"
         exit 0
         ;;
 esac
 
-log info "开始安装 Node.js LTS + @openai/codex"
+check_permission
+get_user_info
+detect_os
 
-case "$OS" in
+NODE_VER_ARG="${1:-lts}"
+case "$NODE_VER_ARG" in
+    18|v18|18.x) SETUP_VER="18.x" ;;
+    20|v20|20.x) SETUP_VER="20.x" ;;
+    22|v22|22.x) SETUP_VER="22.x" ;;
+    lts|current|*) SETUP_VER="lts.x" ;;
+esac
+
+log info "检测到操作系统类型: $OS_FAMILY"
+log info "准备安装 Node.js 版本: $SETUP_VER"
+
+install_debian() {
+    log info "正在更新 apt 索引并安装基础依赖..."
+    apt-get update -y
+    apt-get install -y ca-certificates curl gnupg
+
+    log info "配置 NodeSource 官方仓库 ($SETUP_VER)..."
+    mkdir -p /etc/apt/keyrings
+    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor --yes -o /etc/apt/keyrings/nodesource.gpg
+    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_$SETUP_VER nodistro main" > /etc/apt/sources.list.d/nodesource.list
+
+    apt-get update -y
+    apt-get install -y nodejs
+}
+
+install_rhel() {
+    log info "正在为 RHEL/CentOS 配置 NodeSource 仓库 ($SETUP_VER)..."
+    curl -fsSL "https://rpm.nodesource.com/setup_$SETUP_VER" | bash -
+    if command -v dnf >/dev/null 2>&1; then
+        dnf install -y nodejs
+    else
+        yum install -y nodejs
+    fi
+}
+
+install_macos() {
+    log info "macOS 检测到，使用 Homebrew 安装 Node.js..."
+    if ! command -v brew >/dev/null 2>&1; then
+        log error "未检测到 Homebrew，请先安装 brew"
+    fi
+    brew install node
+}
+
+case "$OS_FAMILY" in
+    debian)
+        install_debian
+        ;;
+    rhel)
+        install_rhel
+        ;;
     macos)
-        install_node_macos
-        ;;
-    ubuntu|debian)
-        install_node_debian
-        ;;
-    centos|rhel|rocky|almalinux|ol)
-        install_node_rhel
+        install_macos
         ;;
     *)
-        log error "不支持的系统：$OS"
+        log error "不支持的操作系统架构"
         ;;
 esac
 
-#install_codex_cli
-
-log info "全部安装完成！ 🎉"
-
+log info "验证 Node.js 与 npm 安装..."
+if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
+    log info "Node.js 安装成功: $(node -v)"
+    log info "npm 安装成功: $(npm -v)"
+else
+    log error "Node.js 或 npm 未正常安装"
+fi
