@@ -55,6 +55,8 @@ logfile="${LOG_DIR}/$(basename "${BASH_SOURCE[0]}" .sh).log"
 
 DEFAULT_BASE_DIR="/personal/samba"
 DEFAULT_PORT="445"
+HOST_RECORD_FILE="/etc/samba/.server_host"
+CUSTOM_HOST=""
 SMB_CONF="/etc/samba/smb.conf"
 AVAHI_DIR="/etc/avahi/services"
 AVAHI_CONF="${AVAHI_DIR}/samba.service"
@@ -178,12 +180,75 @@ function detect_service_manager {
     echo "direct"
 }
 
-# 获取本机局域网 IP
-function get_local_ip {
-    LOCAL_IP=$(ip route get 1.1.1.1 2>/dev/null | awk '{print $7; exit}' || hostname -I 2>/dev/null | awk '{print $1}')
-    if [ -z "$LOCAL_IP" ]; then
-        LOCAL_IP="<服务器IP>"
+# 多源智能探测服务器 IP / 域名 (内网 IP + 公网 IP + 历史记录)
+function detect_server_hosts {
+    # 1. 探测内网 IP
+    PRIVATE_IP=$(ip route get 1.1.1.1 2>/dev/null | awk '{print $7; exit}' || hostname -I 2>/dev/null | awk '{print $1}')
+    
+    # 2. 探测公网 IP (针对阿里云/腾讯云 ECS 等云主机，设置 2 秒超时防卡顿)
+    PUBLIC_IP=""
+    if command -v curl >/dev/null 2>&1; then
+        PUBLIC_IP=$(curl -fsSL --connect-timeout 2 "https://api.ipify.org" 2>/dev/null ||                     curl -fsSL --connect-timeout 2 "http://ip.sb" 2>/dev/null ||                     curl -fsSL --connect-timeout 2 "http://ifconfig.me" 2>/dev/null || true)
     fi
+
+    # 3. 决定默认推荐候选
+    if [ -f "$HOST_RECORD_FILE" ] && [ -s "$HOST_RECORD_FILE" ]; then
+        RECOMMENDED_HOST=$(cat "$HOST_RECORD_FILE" | tr -d ' \n\r')
+    elif [ -n "$PUBLIC_IP" ] && [[ "$PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        RECOMMENDED_HOST="$PUBLIC_IP"
+    elif [ -n "$PRIVATE_IP" ]; then
+        RECOMMENDED_HOST="$PRIVATE_IP"
+    else
+        RECOMMENDED_HOST="<服务器IP/域名>"
+    fi
+    
+    SERVER_HOST="$RECOMMENDED_HOST"
+}
+
+# 获取当前配置的服务器连接地址
+function get_server_host {
+    if [ -n "$CUSTOM_HOST" ]; then
+        SERVER_HOST="$CUSTOM_HOST"
+        return 0
+    fi
+    if [ -f "$HOST_RECORD_FILE" ] && [ -s "$HOST_RECORD_FILE" ]; then
+        SERVER_HOST=$(cat "$HOST_RECORD_FILE" | tr -d ' \n\r')
+        return 0
+    fi
+    detect_server_hosts
+}
+
+# 交互式确认或手动输入服务器 IP / 域名 (完美适配 ECS 云服务器与自定义域名)
+function prompt_server_host {
+    if [ -n "$CUSTOM_HOST" ]; then
+        SERVER_HOST="$CUSTOM_HOST"
+        mkdir -p /etc/samba 2>/dev/null || true
+        echo "$SERVER_HOST" > "$HOST_RECORD_FILE" 2>/dev/null || true
+        return 0
+    fi
+
+    detect_server_hosts
+
+    echo ""
+    echo -e "\033[36m------------------------------------------------------------------------------\033[0m"
+    echo -e "\033[33m🌐 服务器访问地址 (IP / 域名) 探测与确认:\033[0m"
+    [ -n "$PRIVATE_IP" ] && echo -e "   • 检测到内网局域网 IP: \033[36m${PRIVATE_IP}\033[0m"
+    [ -n "$PUBLIC_IP" ]  && echo -e "   • 检测到公网外网 IP:   \033[32m${PUBLIC_IP}\033[0m (推荐用于云服务器 ECS / 外网挂载)"
+
+    local default_prompt="${RECOMMENDED_HOST}"
+    echo -n "请输入客户端连接使用的 服务器IP 或 解析域名 [回车默认使用: ${default_prompt}]: "
+    read -r user_input_host
+
+    if [ -n "$user_input_host" ]; then
+        SERVER_HOST="$user_input_host"
+    else
+        SERVER_HOST="$RECOMMENDED_HOST"
+    fi
+
+    mkdir -p /etc/samba 2>/dev/null || true
+    echo "$SERVER_HOST" > "$HOST_RECORD_FILE" 2>/dev/null || true
+    echo -e "\033[36m------------------------------------------------------------------------------\033[0m"
+    log info "已设置客户端连接目标地址为: $SERVER_HOST"
 }
 
 # 从当前 smb.conf 获取共享基目录 (默认 /personal/samba)
@@ -746,33 +811,38 @@ function service_control {
 # 打印多端挂载连接指南
 function print_mount_guide {
     local target_user="${1:-<用户名>}"
+    local custom_h="${2:-}"
     local port
     port="$(get_current_port)"
-    get_local_ip
+    if [ -n "$custom_h" ]; then
+        SERVER_HOST="$custom_h"
+    else
+        get_server_host
+    fi
 
     echo ""
     echo -e "\033[36m==============================================================================\033[0m"
-    echo -e "\033[32m  🎉 全平台客户端连接与挂载指南 (IP: ${LOCAL_IP} | 端口: ${port} | 用户: ${target_user})\033[0m"
+    echo -e "\033[32m  🎉 全平台客户端连接与挂载指南 (主机: ${SERVER_HOST} | 端口: ${port} | 用户: ${target_user})\033[0m"
     echo -e "\033[36m==============================================================================\033[0m"
     echo -e "\033[33m🍏 1. macOS 访达 (Finder) 挂载:\033[0m"
     echo -e "   • 打开访达，按快捷键 \033[32m⌘ + K\033[0m (或顶部菜单: 前往 ➔ 连接服务器)"
     if [ "$port" = "445" ]; then
-        echo -e "   • 服务器地址输入: \033[36msmb://${LOCAL_IP}/${target_user}\033[0m"
+        echo -e "   • 服务器地址输入: \033[36msmb://${SERVER_HOST}/${target_user}\033[0m"
     else
-        echo -e "   • 服务器地址输入 (带自定义端口): \033[36msmb://${LOCAL_IP}:${port}/${target_user}\033[0m"
+        echo -e "   • 服务器地址输入 (带自定义端口): \033[36msmb://${SERVER_HOST}:${port}/${target_user}\033[0m"
     fi
     echo -e "   • 选择「注册用户」，输入用户名 \033[32m${target_user}\033[0m 和对应密码即可。"
-    echo -e "   • \033[35m(已配置 Bonjour/Avahi 自动广播端口，访达侧边栏'网络/位置'可直接双击发现与推出)\033[0m"
+    echo -e "   • \033[35m(已配置 Bonjour/Avahi 自动广播端口，局域网/访达侧边栏'网络/位置'可直接双击发现与推出)\033[0m"
     echo ""
     echo -e "\033[33m🪟 2. Windows 资源管理器挂载:\033[0m"
     if [ "$port" = "445" ]; then
-        echo -e "   • 打开文件资源管理器地址栏 (或按 \033[32mWin + R\033[0m)，输入: \033[36m\\\\${LOCAL_IP}\\${target_user}\033[0m"
+        echo -e "   • 打开文件资源管理器地址栏 (或按 \033[32mWin + R\033[0m)，输入: \033[36m\\\\${SERVER_HOST}\\${target_user}\033[0m"
         echo -e "   • 映射为本地网络驱动器 (CMD 执行):"
-        echo -e "     \033[32mnet use Z: \\\\${LOCAL_IP}\\${target_user} /user:${target_user} <密码> /persistent:yes\033[0m"
+        echo -e "     \033[32mnet use Z: \\\\${SERVER_HOST}\\${target_user} /user:${target_user} <密码> /persistent:yes\033[0m"
     else
         echo -e "   • \033[31m[注意]\033[0m Windows 资源管理器原生仅直连 445 端口。连接自定义端口 [${port}] 推荐方式:"
         echo -e "     \033[32m① 本地端口转发 (以管理员身份打开 CMD 执行):\033[0m"
-        echo -e "        netsh interface portproxy add v4tov4 listenaddress=127.0.0.1 listenport=445 connectaddress=${LOCAL_IP} connectport=${port}"
+        echo -e "        netsh interface portproxy add v4tov4 listenaddress=127.0.0.1 listenport=445 connectaddress=${SERVER_HOST} connectport=${port}"
         echo -e "        然后按 Win + R 输入: \033[36m\\\\127.0.0.1\\${target_user}\033[0m 即可无缝访问！"
         echo -e "     \033[32m② 或使用第三方挂载工具 (如 RaiDrive / Cyberduck)，在界面中指定端口 ${port} 挂载。\033[0m"
     fi
@@ -781,15 +851,15 @@ function print_mount_guide {
     echo -e "   • 临时挂载命令:"
     echo -e "     \033[32msudo mkdir -p /mnt/samba_${target_user}\033[0m"
     if [ "$port" = "445" ]; then
-        echo -e "     \033[32msudo mount -t cifs //${LOCAL_IP}/${target_user} /mnt/samba_${target_user} -o username=${target_user},password=<密码>,uid=\$(id -u),gid=\$(id -g),iocharset=utf8\033[0m"
+        echo -e "     \033[32msudo mount -t cifs //${SERVER_HOST}/${target_user} /mnt/samba_${target_user} -o username=${target_user},password=<密码>,uid=\$(id -u),gid=\$(id -g),iocharset=utf8\033[0m"
     else
-        echo -e "     \033[32msudo mount -t cifs //${LOCAL_IP}/${target_user} /mnt/samba_${target_user} -o port=${port},username=${target_user},password=<密码>,uid=\$(id -u),gid=\$(id -g),iocharset=utf8\033[0m"
+        echo -e "     \033[32msudo mount -t cifs //${SERVER_HOST}/${target_user} /mnt/samba_${target_user} -o port=${port},username=${target_user},password=<密码>,uid=\$(id -u),gid=\$(id -g),iocharset=utf8\033[0m"
     fi
     echo -e "   • 开机自动挂载 (/etc/fstab 追加):"
     if [ "$port" = "445" ]; then
-        echo -e "     \033[32m//${LOCAL_IP}/${target_user}  /mnt/samba_${target_user}  cifs  username=${target_user},password=<密码>,uid=\$(id -u),gid=\$(id -g),iocharset=utf8,_netdev  0  0\033[0m"
+        echo -e "     \033[32m//${SERVER_HOST}/${target_user}  /mnt/samba_${target_user}  cifs  username=${target_user},password=<密码>,uid=\$(id -u),gid=\$(id -g),iocharset=utf8,_netdev  0  0\033[0m"
     else
-        echo -e "     \033[32m//${LOCAL_IP}/${target_user}  /mnt/samba_${target_user}  cifs  port=${port},username=${target_user},password=<密码>,uid=\$(id -u),gid=\$(id -g),iocharset=utf8,_netdev  0  0\033[0m"
+        echo -e "     \033[32m//${SERVER_HOST}/${target_user}  /mnt/samba_${target_user}  cifs  port=${port},username=${target_user},password=<密码>,uid=\$(id -u),gid=\$(id -g),iocharset=utf8,_netdev  0  0\033[0m"
     fi
     echo -e "\033[36m==============================================================================\033[0m"
     echo ""
@@ -882,7 +952,7 @@ function do_uninstall {
     unregister_service || true
 
     log info "清理配置文件与 Avahi 广播..."
-    rm -f "$AVAHI_CONF"
+    rm -f "$AVAHI_CONF" "$HOST_RECORD_FILE"
     if [ -f "$SMB_CONF" ]; then
         mv "$SMB_CONF" "/etc/samba/smb.conf.bak.$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
     fi
@@ -915,7 +985,7 @@ function do_uninstall {
 # 交互式菜单
 function main_menu {
     while true; do
-        get_local_ip
+        get_server_host
         local base_dir
         base_dir="$(get_base_share_dir)"
         local current_port
@@ -923,7 +993,7 @@ function main_menu {
 
         echo ""
         echo -e "\033[36m==============================================================================\033[0m"
-        echo -e "\033[32m        Samba 多用户隔离共享管理面板 (IP: ${LOCAL_IP} | 端口: ${current_port})\033[0m"
+        echo -e "\033[32m        Samba 多用户隔离共享管理面板 (主机: ${SERVER_HOST} | 端口: ${current_port})\033[0m"
         echo -e "\033[36m==============================================================================\033[0m"
         echo -e "  \033[33m1)\033[0m 安装并初始化 Samba (默认根目录: ${DEFAULT_BASE_DIR} | 默认端口: ${DEFAULT_PORT})"
         echo -e "  \033[33m2)\033[0m 添加专属隔离用户 (自动分配 /personal/samba/<用户名>)"
@@ -941,6 +1011,7 @@ function main_menu {
 
         case "$choice" in
             1)
+                prompt_server_host
                 echo -n "请输入共享根目录 [回车默认 ${DEFAULT_BASE_DIR}]: "
                 read -r input_dir
                 input_dir="${input_dir:-$DEFAULT_BASE_DIR}"
@@ -985,7 +1056,13 @@ function main_menu {
             8)
                 echo -n "请输入要查询指南的用户名 [回车默认显示通用]: "
                 read -r q_user
-                print_mount_guide "$q_user"
+                echo -n "当前客户端连接目标地址为 [${SERVER_HOST}]，按回车直接使用，或输入新IP/域名: "
+                read -r input_new_h
+                if [ -n "$input_new_h" ]; then
+                    SERVER_HOST="$input_new_h"
+                    echo "$SERVER_HOST" > "$HOST_RECORD_FILE" 2>/dev/null || true
+                fi
+                print_mount_guide "$q_user" "$SERVER_HOST"
                 ;;
             9)
                 echo -n "确认要彻底卸载 Samba 吗? [y/N]: "
@@ -1013,6 +1090,24 @@ function main_menu {
 check_permission
 get_original_user
 detect_system
+
+# 解析全局选项 (例如 --host 指定 IP / 域名)
+POSITIONAL_ARGS=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -H|--host)
+            CUSTOM_HOST="$2"
+            mkdir -p /etc/samba 2>/dev/null || true
+            echo "$CUSTOM_HOST" > "$HOST_RECORD_FILE" 2>/dev/null || true
+            shift 2
+            ;;
+        *)
+            POSITIONAL_ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+set -- "${POSITIONAL_ARGS[@]}"
 
 ACTION="${1:-}"
 
