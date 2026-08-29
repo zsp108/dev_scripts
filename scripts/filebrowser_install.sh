@@ -342,14 +342,17 @@ function download_filebrowser {
     rm -rf "$tmp_dir"
     mkdir -p "$tmp_dir"
 
-    # 1. 检查本地是否存在离线安装包或二进制
+    # 1. 检查本地是否存在离线安装包或二进制 (多路径智能探测)
     local local_search_paths=(
-        "${SCRIPT_ROOT}/${pkg_name}"
-        "./${pkg_name}"
+        "${SCRIPT_DIR}/${pkg_name}"
+        "$(pwd)/${pkg_name}"
         "/tmp/${pkg_name}"
-        "${SCRIPT_ROOT}/filebrowser"
-        "./filebrowser"
+        "/personal/${pkg_name}"
+        "/root/${pkg_name}"
+        "${SCRIPT_DIR}/filebrowser"
+        "$(pwd)/filebrowser"
         "/tmp/filebrowser"
+        "/personal/filebrowser_bin"
     )
     for p in "${local_search_paths[@]}"; do
         if [ -f "$p" ]; then
@@ -424,9 +427,9 @@ function download_filebrowser {
         rm -f "$target_file"
         
         if command -v curl >/dev/null 2>&1; then
-            curl -f -L --connect-timeout 5 --max-time 60 --retry 1 -o "$target_file" "$url" 2>>"$logfile" || true
+            curl -k -f -L --connect-timeout 8 --max-time 120 --retry 1 -o "$target_file" "$url" 2>>"$logfile" || true
         elif command -v wget >/dev/null 2>&1; then
-            wget -q --timeout=20 --tries=2 -O "$target_file" "$url" 2>>"$logfile" || true
+            wget --no-check-certificate -q --timeout=30 --tries=2 -O "$target_file" "$url" 2>>"$logfile" || true
         fi
 
         # 严格验证是否为有效的 tar.gz 文件（大小 > 1MB 且 tar -tzf 测试正常）
@@ -446,7 +449,19 @@ function download_filebrowser {
     done
 
     if [ "$download_success" = false ]; then
-        log error "无法下载 FileBrowser 安装包，请检查网络连接或手动下载 ${pkg_name} 放置于脚本目录。"
+        echo ""
+        echo -e "\033[31m==============================================================================\033[0m"
+        echo -e "\033[31m❌ 无法从镜像源自动下载 FileBrowser 安装包 (${pkg_name})\033[0m"
+        echo -e "\033[31m==============================================================================\033[0m"
+        echo -e "\033[33m💡 离线包极简解决指南 (放置后重新运行脚本即可直接秒装):\033[0m"
+        echo -e "   1. 请在宿主机/浏览器下载该安装包:"
+        echo -e "      \033[36mhttps://github.com/filebrowser/filebrowser/releases/download/${version}/${pkg_name}\033[0m"
+        echo -e "   2. 并将下载好的 \033[32m${pkg_name}\033[0m 上传/移动至以下任意目标路径:"
+        echo -e "      • 当前脚本所在目录: \033[32m${SCRIPT_DIR}/${pkg_name}\033[0m"
+        echo -e "      • 或系统临时目录:   \033[32m/tmp/${pkg_name}\033[0m"
+        echo -e "\033[31m==============================================================================\033[0m"
+        echo ""
+        log error "无法下载 FileBrowser 安装包，请按上方提示放置离线包后重试。"
     fi
 
     log info "解压并安装二进制文件到 $INSTALL_BIN ..."
