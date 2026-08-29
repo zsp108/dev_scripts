@@ -560,6 +560,38 @@ function configure_firewall {
     fi
 }
 
+# 精确安全地终止 FileBrowser 二进制进程 (严格排除自身脚本 PID，防止被自身误杀)
+function stop_filebrowser_processes {
+    local my_pid="$$"
+
+    if [ -f "$PID_FILE" ]; then
+        local p
+        p=$(cat "$PID_FILE" 2>/dev/null || true)
+        if [ -n "$p" ] && [ "$p" != "$my_pid" ] && kill -0 "$p" 2>/dev/null; then
+            kill -15 "$p" 2>/dev/null || true
+            sleep 0.5
+            kill -9 "$p" 2>/dev/null || true
+        fi
+        rm -f "$PID_FILE" 2>/dev/null || true
+    fi
+
+    local pids
+    pids=$(pgrep -x filebrowser 2>/dev/null || pidof filebrowser 2>/dev/null || true)
+    if [ -n "$pids" ]; then
+        for pid in $pids; do
+            if [ "$pid" != "$my_pid" ]; then
+                local cmd
+                cmd=$(ps -p "$pid" -o args= 2>/dev/null || true)
+                if [[ "$cmd" != *".sh"* ]]; then
+                    kill -15 "$pid" 2>/dev/null || true
+                    sleep 0.2
+                    kill -9 "$pid" 2>/dev/null || true
+                fi
+            fi
+        done
+    fi
+}
+
 # 生成 SysVinit 启动脚本
 function generate_sysvinit_script {
     mkdir -p /etc/init.d
@@ -613,7 +645,7 @@ stop() {
         rm -f "\$PID_FILE"
         echo "FileBrowser stopped."
     else
-        killall filebrowser 2>/dev/null || true
+        stop_filebrowser_processes
         rm -f "\$PID_FILE"
         echo "FileBrowser is not running."
     fi
@@ -744,7 +776,7 @@ function unregister_service {
         log info "已清理 SysVinit 服务文件: $SYSVINIT_FILE"
     fi
 
-    killall filebrowser 2>/dev/null || true
+    stop_filebrowser_processes
     rm -f "$PID_FILE"
 }
 
@@ -789,12 +821,12 @@ function service_control {
                         log info "FileBrowser 已在后台启动。"
                         ;;
                     stop)
-                        killall filebrowser 2>/dev/null || true
+                        stop_filebrowser_processes
                         rm -f "$PID_FILE"
                         log info "FileBrowser 已停止。"
                         ;;
                     restart)
-                        killall filebrowser 2>/dev/null || true
+                        stop_filebrowser_processes
                         rm -f "$PID_FILE"
                         sleep 1
                         nohup "$INSTALL_BIN" -d "$DB_FILE" >> "$LOG_PATH" 2>&1 &
@@ -858,7 +890,7 @@ function pause_service_if_running {
                 if [ -f "$SYSVINIT_FILE" ]; then
                     "$SYSVINIT_FILE" stop >/dev/null 2>&1 || true
                 fi
-                killall filebrowser >/dev/null 2>&1 || true
+                stop_filebrowser_processes
                 ;;
         esac
         sleep 1
