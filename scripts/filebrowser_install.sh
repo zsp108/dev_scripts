@@ -203,12 +203,100 @@ function detect_service_manager {
     echo "direct"
 }
 
-# 获取本机局域网 IP
-function get_local_ip {
-    LOCAL_IP=$(ip route get 1.1.1.1 2>/dev/null | awk '{print $7; exit}' || hostname -I 2>/dev/null | awk '{print $1}')
-    if [ -z "$LOCAL_IP" ]; then
-        LOCAL_IP="<服务器IP>"
+# 多源智能探测服务器 IP / 域名 (内网 IP + 公网 IP + Samba 已有配置自动复用)
+function detect_server_hosts {
+    # 1. 探测内网 IP
+    PRIVATE_IP=$(ip route get 1.1.1.1 2>/dev/null | awk '{print $7; exit}' || hostname -I 2>/dev/null | awk '{print $1}')
+
+    # 2. 探测公网 IP (针对阿里云/腾讯云 ECS 等云主机，设置 2 秒超时防卡顿)
+    PUBLIC_IP=""
+    if command -v curl >/dev/null 2>&1; then
+        PUBLIC_IP=$(curl -fsSL --connect-timeout 2 "https://api.ipify.org" 2>/dev/null ||                     curl -fsSL --connect-timeout 2 "http://ip.sb" 2>/dev/null ||                     curl -fsSL --connect-timeout 2 "http://ifconfig.me" 2>/dev/null || true)
     fi
+
+    # 3. 决定默认推荐候选 (优先复用 FileBrowser 自身记录 / Samba 已配置域名 / 公共记录)
+    if [ -n "$CUSTOM_HOST" ]; then
+        RECOMMENDED_HOST="$CUSTOM_HOST"
+    elif [ -f "$HOST_RECORD_FILE" ] && [ -s "$HOST_RECORD_FILE" ]; then
+        RECOMMENDED_HOST=$(cat "$HOST_RECORD_FILE" | tr -d ' \n\r')
+    elif [ -f "$SAMBA_HOST_FILE" ] && [ -s "$SAMBA_HOST_FILE" ]; then
+        RECOMMENDED_HOST=$(cat "$SAMBA_HOST_FILE" | tr -d ' \n\r')
+    elif [ -f "$COMMON_HOST_FILE" ] && [ -s "$COMMON_HOST_FILE" ]; then
+        RECOMMENDED_HOST=$(cat "$COMMON_HOST_FILE" | tr -d ' \n\r')
+    elif [ -n "$PUBLIC_IP" ] && [[ "$PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        RECOMMENDED_HOST="$PUBLIC_IP"
+    elif [ -n "$PRIVATE_IP" ]; then
+        RECOMMENDED_HOST="$PRIVATE_IP"
+    else
+        RECOMMENDED_HOST="<服务器IP/域名>"
+    fi
+
+    SERVER_HOST="$RECOMMENDED_HOST"
+}
+
+# 获取当前配置的 Web 访问地址
+function get_server_host {
+    if [ -n "$CUSTOM_HOST" ]; then
+        SERVER_HOST="$CUSTOM_HOST"
+        return 0
+    fi
+    if [ -f "$HOST_RECORD_FILE" ] && [ -s "$HOST_RECORD_FILE" ]; then
+        SERVER_HOST=$(cat "$HOST_RECORD_FILE" | tr -d ' \n\r')
+        return 0
+    fi
+    if [ -f "$SAMBA_HOST_FILE" ] && [ -s "$SAMBA_HOST_FILE" ]; then
+        SERVER_HOST=$(cat "$SAMBA_HOST_FILE" | tr -d ' \n\r')
+        return 0
+    fi
+    if [ -f "$COMMON_HOST_FILE" ] && [ -s "$COMMON_HOST_FILE" ]; then
+        SERVER_HOST=$(cat "$COMMON_HOST_FILE" | tr -d ' \n\r')
+        return 0
+    fi
+    detect_server_hosts
+}
+
+# 保存持久化地址 (同时同步到全局公共共享文件，供 Samba 等其他服务自动复用)
+function save_server_host {
+    local h="$1"
+    mkdir -p "$CONFIG_DIR" /etc/dev_scripts 2>/dev/null || true
+    echo "$h" > "$HOST_RECORD_FILE" 2>/dev/null || true
+    echo "$h" > "$COMMON_HOST_FILE" 2>/dev/null || true
+}
+
+# 交互式确认或手动输入 Web 访问 IP / 域名 (支持一键复用 Samba 配置)
+function prompt_server_host {
+    if [ -n "$CUSTOM_HOST" ]; then
+        SERVER_HOST="$CUSTOM_HOST"
+        save_server_host "$SERVER_HOST"
+        return 0
+    fi
+
+    detect_server_hosts
+
+    echo ""
+    echo -e "\033[36m------------------------------------------------------------------------------\033[0m"
+    echo -e "\033[33m🌐 Web 访问地址 (IP / 域名) 探测与确认:\033[0m"
+    [ -n "$PRIVATE_IP" ] && echo -e "   • 检测到内网局域网 IP: \033[36m${PRIVATE_IP}\033[0m"
+    [ -n "$PUBLIC_IP" ]  && echo -e "   • 检测到公网外网 IP:   \033[32m${PUBLIC_IP}\033[0m (推荐用于云服务器 ECS / 外网访问)"
+    if [ -f "$SAMBA_HOST_FILE" ] && [ -s "$SAMBA_HOST_FILE" ]; then
+        local s_host
+        s_host=$(cat "$SAMBA_HOST_FILE" | tr -d ' \n\r')
+        echo -e "   • 发现 Samba 已配置的域名/IP: \033[35m${s_host}\033[0m (已自动设为默认推荐)"
+    fi
+
+    local default_prompt="${RECOMMENDED_HOST}"
+    echo -n "请输入 Web 客户端访问使用的 服务器IP 或 解析域名 [回车默认使用: ${default_prompt}]: "
+    read -r user_input_host
+
+    if [ -n "$user_input_host" ]; then
+        SERVER_HOST="$user_input_host"
+    else
+        SERVER_HOST="$RECOMMENDED_HOST"
+    fi
+
+    save_server_host "$SERVER_HOST"
+    echo -e "\033[36m------------------------------------------------------------------------------\033[0m"
+    log info "已设置 Web 访问连接目标地址为: $SERVER_HOST"
 }
 
 # 安装基础解压与下载依赖
@@ -652,7 +740,7 @@ function service_control {
                     log info "FileBrowser 服务 [$action] 完成。"
                     ;;
                 status)
-                    get_local_ip
+                    get_server_host
                     echo "--------------------------------------------------------"
                     echo "内网 IP: $LOCAL_IP"
                     echo "systemd 服务状态:"
@@ -700,7 +788,7 @@ function service_control {
             fi
 
             if [ "$action" = "status" ]; then
-                get_local_ip
+                get_server_host
                 echo "--------------------------------------------------------"
                 echo "内网 IP: $LOCAL_IP"
                 echo "日志文件: $LOG_PATH"
@@ -1111,12 +1199,13 @@ function do_install {
     log info "  数据库路径: $DB_FILE"
     log info "  默认管理员: admin"
 
+    prompt_server_host
     install_dependencies
     download_filebrowser
     init_filebrowser_config "$ROOT_DIR" "$PORT" "$ADMIN_PASS" "$DB_FILE"
     configure_firewall "$PORT"
     register_service
-    get_local_ip
+    get_server_host
 
     local s_mgr
     s_mgr="$(detect_service_manager)"
@@ -1125,7 +1214,7 @@ function do_install {
     echo -e "\033[32m========================================================\033[0m"
     echo -e "\033[32m          FileBrowser Web 文件管理器部署成功！          \033[0m"
     echo -e "\033[32m========================================================\033[0m"
-    echo -e "Web 访问地址:  \033[36mhttp://${LOCAL_IP}:${PORT}\033[0m"
+    echo -e "Web 访问地址:  \033[36mhttp://${SERVER_HOST}:${PORT}\033[0m"
     echo -e "超级管理员:    \033[36madmin\033[0m"
     echo -e "管理员密码:    \033[36m${ADMIN_PASS}\033[0m"
     echo -e "全局数据根目录:\033[36m${ROOT_DIR}\033[0m"
@@ -1168,6 +1257,7 @@ function do_uninstall {
         rm -rf "$CONFIG_DIR"
         rm -f "$DB_FILE"
         rm -f "$LOG_PATH"
+        rm -f "$HOST_RECORD_FILE"
         log info "已清理数据库文件、/etc/filebrowser 及运行日志。"
     else
         log info "已保留数据库文件与配置文件。"
@@ -1197,10 +1287,11 @@ function main_menu {
         echo " 10. 删除用户 (Delete User)"
         echo " 11. 重置用户密码 (Set Password)"
         echo " 12. 修改监听端口 (Set Port)"
-        echo " 13. 完全卸载 FileBrowser (Uninstall)"
+        echo " 13. 修改 Web 访问 IP / 域名 (当前: \033[36m${SERVER_HOST}\033[0m)"
+        echo " 14. 完全卸载 FileBrowser (Uninstall)"
         echo " 0. 退出 (Exit)"
         echo "========================================================"
-        read -r -p "请输入选项 [0-13]: " choice
+        read -r -p "请输入选项 [0-14]: " choice
 
         case "$choice" in
             1)
@@ -1240,6 +1331,15 @@ function main_menu {
                 do_setport
                 ;;
             13)
+                echo -n "当前 Web 访问目标地址为 [${SERVER_HOST}]，按回车直接使用，或输入新IP/域名: "
+                read -r new_h
+                if [ -n "$new_h" ]; then
+                    SERVER_HOST="$new_h"
+                    save_server_host "$SERVER_HOST"
+                    log info "Web 访问地址已成功更新为: $SERVER_HOST"
+                fi
+                ;;
+            14)
                 do_uninstall
                 ;;
             0)
@@ -1260,6 +1360,23 @@ check_permission
 get_original_user
 detect_system
 load_runtime_config
+
+# 解析全局选项 (例如 --host 指定 IP / 域名)
+POSITIONAL_ARGS=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -H|--host)
+            CUSTOM_HOST="$2"
+            save_server_host "$CUSTOM_HOST"
+            shift 2
+            ;;
+        *)
+            POSITIONAL_ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+set -- "${POSITIONAL_ARGS[@]}"
 
 ACTION="${1:-}"
 

@@ -1,28 +1,40 @@
 # filebrowser_install.sh Usage Guide
 
-## Introduction
-FileBrowser is a lightweight and powerful Web file manager. This script provides automated installation and deeply customizes a **multi-user storage isolation** model (which pairs perfectly with Samba deployments). Additionally, the script features a 3-tier intelligent detection mechanism to automatically register FileBrowser as a system background service (like Systemd).
+## Overview
+This is an automated deployment and multi-user isolation management script for FileBrowser Web File Manager across Ubuntu, Debian, CentOS, and RHEL:
+1. **Smart Host Detection & Cross-Service Reuse**:
+   - Automatically detects private IPs and Cloud ECS public IPs;
+   - **Seamless Samba Integration**: If a custom IP or domain was already configured via `samba_install.sh`, FileBrowser automatically detects and defaults to it without manual re-entry!
+2. **Multi-User Scope Isolation**: Allows assigning dedicated root directories (scopes) for individual users, while admin has full global view.
+3. **Service Management**: Automatically registers and manages systemd or SysVinit background daemon.
+
+---
 
 ## Usage Examples
 
-### 1. Interactive Installation (Recommended)
-Run the script directly. It will enter interactive mode, guiding you step-by-step to configure the admin account, listening port, etc.
+### 1. Interactive Menu (Recommended)
+Run the script to open the management panel:
 ```bash
-./scripts/filebrowser_install.sh
+sudo ./scripts/filebrowser_install.sh
 ```
 
-### 2. Quick Automated Installation
-If you wish to use it in automated pipelines or non-interactive environments, pass all necessary arguments:
+### 2. CLI Fast Installation with Custom Host
 ```bash
-# Format: sudo ./filebrowser_install.sh install [admin_dir] [port] [admin_password]
-sudo ./scripts/filebrowser_install.sh install /data/filebrowser 8080 mySecretPassword
+# Syntax: sudo ./scripts/filebrowser_install.sh install [root_dir] [port] [admin_pass] [db_path] [--host <ip/domain>]
+sudo ./scripts/filebrowser_install.sh install /personal/samba 8080 MyAdminPass123 /etc/filebrowser/filebrowser.db --host 123.56.78.90
 ```
 
-### 3. Service Operations & Management
-Once installed, you can control it using standard service management commands (Systemd based):
+### 3. User Management & Scope Isolation
 ```bash
-sudo systemctl status filebrowser
-sudo systemctl restart filebrowser
-sudo systemctl stop filebrowser
-```
+# Add an isolated user
+sudo ./scripts/filebrowser_install.sh adduser alice AlicePass123 /personal/samba/alice
 
+# List all users
+sudo ./scripts/filebrowser_install.sh lsusers
+
+# Change password
+sudo ./scripts/filebrowser_install.sh setpasswd alice NewPass456
+
+# Delete user
+sudo ./scripts/filebrowser_install.sh deluser alice
+```

@@ -223,7 +223,9 @@ function prompt_server_host {
     if [ -n "$CUSTOM_HOST" ]; then
         SERVER_HOST="$CUSTOM_HOST"
         mkdir -p /etc/samba 2>/dev/null || true
-        echo "$SERVER_HOST" > "$HOST_RECORD_FILE" 2>/dev/null || true
+        mkdir -p /etc/dev_scripts 2>/dev/null || true
+    echo "$SERVER_HOST" > /etc/dev_scripts/.server_host 2>/dev/null || true
+    echo "$SERVER_HOST" > "$HOST_RECORD_FILE" 2>/dev/null || true
         return 0
     fi
 
@@ -246,6 +248,8 @@ function prompt_server_host {
     fi
 
     mkdir -p /etc/samba 2>/dev/null || true
+    mkdir -p /etc/dev_scripts 2>/dev/null || true
+    echo "$SERVER_HOST" > /etc/dev_scripts/.server_host 2>/dev/null || true
     echo "$SERVER_HOST" > "$HOST_RECORD_FILE" 2>/dev/null || true
     echo -e "\033[36m------------------------------------------------------------------------------\033[0m"
     log info "已设置客户端连接目标地址为: $SERVER_HOST"
@@ -1216,7 +1220,9 @@ function main_menu {
                 read -r input_new_h
                 if [ -n "$input_new_h" ]; then
                     SERVER_HOST="$input_new_h"
-                    echo "$SERVER_HOST" > "$HOST_RECORD_FILE" 2>/dev/null || true
+                    mkdir -p /etc/dev_scripts 2>/dev/null || true
+    echo "$SERVER_HOST" > /etc/dev_scripts/.server_host 2>/dev/null || true
+    echo "$SERVER_HOST" > "$HOST_RECORD_FILE" 2>/dev/null || true
                 fi
                 print_mount_guide "$q_user" "$SERVER_HOST"
                 ;;
@@ -1254,6 +1260,8 @@ while [ $# -gt 0 ]; do
         -H|--host)
             CUSTOM_HOST="$2"
             mkdir -p /etc/samba 2>/dev/null || true
+            mkdir -p /etc/dev_scripts 2>/dev/null || true
+            echo "$CUSTOM_HOST" > /etc/dev_scripts/.server_host 2>/dev/null || true
             echo "$CUSTOM_HOST" > "$HOST_RECORD_FILE" 2>/dev/null || true
             shift 2
             ;;
