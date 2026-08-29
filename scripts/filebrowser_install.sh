@@ -48,6 +48,10 @@ INSTALL_BIN="/usr/local/bin/filebrowser"
 CONFIG_DIR="/etc/filebrowser"
 DEFAULT_DB_FILE="${CONFIG_DIR}/filebrowser.db"
 ENV_FILE="${CONFIG_DIR}/filebrowser.env"
+COMMON_HOST_FILE="/etc/dev_scripts/.server_host"
+SAMBA_HOST_FILE="/etc/samba/.server_host"
+HOST_RECORD_FILE="${CONFIG_DIR}/.server_host"
+CUSTOM_HOST=""
 DB_FILE="${FILEBROWSER_DB:-$DEFAULT_DB_FILE}"
 LOG_PATH="/var/log/filebrowser.log"
 PID_FILE="/var/run/filebrowser.pid"
@@ -258,9 +262,11 @@ function get_server_host {
 # 保存持久化地址 (同时同步到全局公共共享文件，供 Samba 等其他服务自动复用)
 function save_server_host {
     local h="$1"
+    [ -z "$h" ] && return 0
+    [ -z "$CONFIG_DIR" ] && CONFIG_DIR="/etc/filebrowser"
     mkdir -p "$CONFIG_DIR" /etc/dev_scripts 2>/dev/null || true
-    echo "$h" > "$HOST_RECORD_FILE" 2>/dev/null || true
-    echo "$h" > "$COMMON_HOST_FILE" 2>/dev/null || true
+    echo "$h" > "${CONFIG_DIR}/.server_host" 2>/dev/null || true
+    echo "$h" > "/etc/dev_scripts/.server_host" 2>/dev/null || true
 }
 
 # 交互式确认或手动输入 Web 访问 IP / 域名 (支持一键复用 Samba 配置)
@@ -396,14 +402,17 @@ function download_filebrowser {
         download_urls+=("$FILEBROWSER_DOWNLOAD_URL")
     fi
     download_urls+=(
-        "https://gh-proxy.com/https://github.com/filebrowser/filebrowser/releases/download/${version}/${pkg_name}"
-        "https://gh.ddlc.top/https://github.com/filebrowser/filebrowser/releases/download/${version}/${pkg_name}"
-        "https://ghproxy.cc/https://github.com/filebrowser/filebrowser/releases/download/${version}/${pkg_name}"
-        "https://gh.llkk.cc/https://github.com/filebrowser/filebrowser/releases/download/${version}/${pkg_name}"
-        "https://github.chenby.cn/https://github.com/filebrowser/filebrowser/releases/download/${version}/${pkg_name}"
-        "https://ghfast.top/https://github.com/filebrowser/filebrowser/releases/download/${version}/${pkg_name}"
-        "https://mirror.ghproxy.com/https://github.com/filebrowser/filebrowser/releases/download/${version}/${pkg_name}"
         "https://ghproxy.net/https://github.com/filebrowser/filebrowser/releases/download/${version}/${pkg_name}"
+        "https://gh-proxy.net/https://github.com/filebrowser/filebrowser/releases/download/${version}/${pkg_name}"
+        "https://ghfast.top/https://github.com/filebrowser/filebrowser/releases/download/${version}/${pkg_name}"
+        "https://gh.ddlc.top/https://github.com/filebrowser/filebrowser/releases/download/${version}/${pkg_name}"
+        "https://gh.api.99988866.xyz/https://github.com/filebrowser/filebrowser/releases/download/${version}/${pkg_name}"
+        "https://gitproxy.click/https://github.com/filebrowser/filebrowser/releases/download/${version}/${pkg_name}"
+        "https://ghproxy.cc/https://github.com/filebrowser/filebrowser/releases/download/${version}/${pkg_name}"
+        "https://gh-proxy.com/https://github.com/filebrowser/filebrowser/releases/download/${version}/${pkg_name}"
+        "https://github.chenby.cn/https://github.com/filebrowser/filebrowser/releases/download/${version}/${pkg_name}"
+        "https://hub.gitmirror.com/https://github.com/filebrowser/filebrowser/releases/download/${version}/${pkg_name}"
+        "https://mirror.ghproxy.com/https://github.com/filebrowser/filebrowser/releases/download/${version}/${pkg_name}"
         "https://github.com/filebrowser/filebrowser/releases/download/${version}/${pkg_name}"
     )
 
