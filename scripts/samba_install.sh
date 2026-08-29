@@ -491,23 +491,26 @@ function init_smb_global_conf {
     use sendfile = yes
     aio read size = 16384
     aio write size = 16384
-    ea support = yes
-    smb2 leases = yes
+    # 针对底层 NFS / 阿里云 NAS / 本地非 xattr 存储的兼容性优化 (彻底杜绝 macOS 写入 100093 扩展属性错误)
+    ea support = no
+    store dos attributes = no
 
     # 连接断开与锁即时释放优化 (解决 macOS 推出卡顿/文件句柄残留)
     deadtime = 10
     reset on zero vc = yes
 
-    # macOS 原生兼容模块 (支持 Finder 磁盘侧边栏、推出图标、元数据读写)
-    vfs objects = catia fruit streams_xattr
-    fruit:metadata = stream
+    # macOS 原生兼容模块 (适配 NFS / 本地存储无扩展属性环境)
+    vfs objects = catia fruit
+    fruit:metadata = netatalk
+    fruit:resource = file
+    fruit:locking = none
+    fruit:nfs_aces = no
     fruit:model = Macmini
     fruit:posix_rename = yes
     fruit:veto_appledouble = no
     fruit:wipe_intentionally_left_blank_rfork = yes
     fruit:delete_empty_adfiles = yes
     fruit:time machine = no
-    fruit:locking = none
 
     # 日志与打印机配置
     log file = /var/log/samba/log.%m
@@ -622,7 +625,7 @@ function add_user_to_samba {
     directory mask = 0777
     force create mode = 0666
     force directory mode = 0777
-    vfs objects = catia fruit streams_xattr
+    vfs objects = catia fruit
     fruit:locking = none
 
 EOF_USER
