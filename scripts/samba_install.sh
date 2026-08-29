@@ -545,6 +545,10 @@ function init_smb_global_conf {
     deadtime = 10
     reset on zero vc = yes
 
+    # 彻底拦截与杜绝 ._ 与 .DS_Store 冗余隐藏文件产生 (保持目录极致纯净)
+    veto files = /._*/.DS_Store/.nfs*/Thumbs.db/
+    delete veto files = yes
+
     # macOS 原生兼容模块 (适配 NFS / 本地存储无扩展属性环境)
     vfs objects = catia fruit
     fruit:metadata = netatalk
@@ -553,7 +557,7 @@ function init_smb_global_conf {
     fruit:nfs_aces = no
     fruit:model = Macmini
     fruit:posix_rename = yes
-    fruit:veto_appledouble = no
+    fruit:veto_appledouble = yes
     fruit:wipe_intentionally_left_blank_rfork = yes
     fruit:delete_empty_adfiles = yes
     fruit:time machine = no
@@ -648,6 +652,8 @@ function add_user_to_samba {
     mkdir -p "$user_dir"
     chown -R "${username}:${username}" "$user_dir" 2>/dev/null || chown -R "${username}" "$user_dir" 2>/dev/null || true
     chmod 0777 "$user_dir"
+    # 自动清理可能存在的 macOS/NFS 历史残留隐藏文件
+    find "$user_dir" -maxdepth 2 -name '._*' -o -name '.DS_Store' 2>/dev/null | xargs -r rm -f 2>/dev/null || true
     log info "用户专属目录已就绪: $user_dir (归属: $username)"
 
     # 4. 在 smb.conf 中注册显式专属共享块 [$username]
