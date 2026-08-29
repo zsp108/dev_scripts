@@ -338,12 +338,12 @@ function install_packages {
         debian)
             export DEBIAN_FRONTEND=noninteractive
             apt-get update -y
-            apt-get install -y samba samba-common-bin smbclient procps psmisc net-tools avahi-daemon
+            apt-get install -y samba samba-common-bin smbclient procps psmisc net-tools attr avahi-daemon
             ;;
         redhat)
             $PKG_MGR makecache -y || true
             $PKG_MGR install -y epel-release || true
-            $PKG_MGR install -y samba samba-common samba-client procps-ng psmisc net-tools avahi policycoreutils-python-utils || \
+            $PKG_MGR install -y samba samba-common samba-client procps-ng psmisc net-tools attr avahi policycoreutils-python-utils || \
             $PKG_MGR install -y samba samba-common samba-client procps-ng avahi policycoreutils-python || \
             $PKG_MGR install -y samba samba-common samba-client procps-ng avahi || \
             $PKG_MGR install -y samba samba-common samba-client procps-ng
@@ -455,6 +455,52 @@ function configure_selinux {
             log info "SELinux 规则配置完成。"
         fi
     fi
+}
+
+# 智能探测底层共享存储的文件系统类型与 xattr (扩展属性) 支持能力
+function detect_storage_features {
+    local target_dir="${1:-$DEFAULT_BASE_DIR}"
+    mkdir -p "$target_dir" 2>/dev/null || true
+
+    FS_TYPE=$(df -T "$target_dir" 2>/dev/null | awk 'NR==2 {print $2}')
+    [ -z "$FS_TYPE" ] && FS_TYPE="unknown"
+
+    SUPPORTS_XATTR="false"
+    local test_file="${target_dir}/.samba_xattr_test_$$"
+    if touch "$test_file" 2>/dev/null; then
+        if command -v setfattr >/dev/null 2>&1; then
+            if setfattr -n user.test_samba_ea -v 'ok' "$test_file" 2>/dev/null; then
+                SUPPORTS_XATTR="true"
+            fi
+        elif command -v attr >/dev/null 2>&1; then
+            if attr -s test_samba_ea -V 'ok' "$test_file" 2>/dev/null; then
+                SUPPORTS_XATTR="true"
+            fi
+        elif command -v xattr >/dev/null 2>&1; then
+            if xattr -w user.test_samba_ea 'ok' "$test_file" 2>/dev/null; then
+                SUPPORTS_XATTR="true"
+            fi
+        else
+            case "$FS_TYPE" in
+                ext3|ext4|xfs|btrfs|zfs|apfs)
+                    SUPPORTS_XATTR="true"
+                    ;;
+                *)
+                    SUPPORTS_XATTR="false"
+                    ;;
+            esac
+        fi
+        rm -f "$test_file" 2>/dev/null || true
+    fi
+
+    # 网络文件系统或虚拟分卷，即使偶尔通过也强制以安全高兼容模式运行
+    case "$FS_TYPE" in
+        nfs|nfs4|cifs|smbfs|fuse|fuseblk|overlay|9p)
+            SUPPORTS_XATTR="false"
+            ;;
+    esac
+
+    log info "底层存储特性探测: 共享根目录 [$target_dir] | 文件系统类型 [$FS_TYPE] | 原生 xattr 支持: [$SUPPORTS_XATTR]"
 }
 
 # 初始化 /etc/samba/smb.conf 全局模板 (支持自定义端口、macOS Fruit、Windows SMB2/3 与 Linux 深度优化)
@@ -605,6 +651,11 @@ function add_user_to_samba {
     log info "用户专属目录已就绪: $user_dir (归属: $username)"
 
     # 4. 在 smb.conf 中注册显式专属共享块 [$username]
+    local user_vfs="catia fruit"
+    if grep -q "streams_xattr" "$SMB_CONF" 2>/dev/null; then
+        user_vfs="catia fruit streams_xattr"
+    fi
+
     if ! grep -q "^\[$username\]" "$SMB_CONF" 2>/dev/null; then
         log info "在 $SMB_CONF 中写入独立磁盘块 [$username]..."
         cat << EOF_USER >> "$SMB_CONF"
@@ -625,7 +676,7 @@ function add_user_to_samba {
     directory mask = 0777
     force create mode = 0666
     force directory mode = 0777
-    vfs objects = catia fruit
+    vfs objects = $user_vfs
     fruit:locking = none
 
 EOF_USER
@@ -982,7 +1033,7 @@ function do_install {
 
     install_packages
     configure_avahi "$port"
-    init_smb_global_conf "$port"
+    init_smb_global_conf "$port" "$base_dir"
     configure_firewall "$port"
     configure_selinux "$base_dir" "$port"
     register_service
