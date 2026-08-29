@@ -265,6 +265,71 @@ function get_current_port {
     echo "${p:-$DEFAULT_PORT}"
 }
 
+# 彻底终结所有残留的 smbd 进程与端口占用 (不依赖单一外部命令，多级强力清场)
+function kill_smbd_processes {
+    local port="${1:-}"
+    
+    # 1. 尝试使用服务管理器停止
+    local mgr
+    mgr=$(detect_service_manager)
+    if [ "$mgr" = "systemd" ]; then
+        systemctl stop "${UNIFIED_SERVICE_NAME}" 2>/dev/null || true
+        systemctl stop "$SYS_SERVICE_NAME" 2>/dev/null || true
+    elif [ "$mgr" = "sysvinit" ] && command -v service >/dev/null 2>&1; then
+        service "${UNIFIED_SERVICE_NAME}" stop 2>/dev/null || true
+        service "$SYS_SERVICE_NAME" stop 2>/dev/null || true
+    fi
+
+    # 2. 如果指定了端口，尝试释放该端口占用 (fuser / ss)
+    if [ -n "$port" ] && command -v fuser >/dev/null 2>&1; then
+        fuser -k -n tcp "$port" 2>/dev/null || true
+    fi
+
+    # 3. 递进式终止所有 smbd 进程 (SIGTERM 15)
+    if command -v pkill >/dev/null 2>&1; then
+        pkill -15 -x smbd 2>/dev/null || true
+    fi
+    if command -v killall >/dev/null 2>&1; then
+        killall -15 smbd 2>/dev/null || true
+    fi
+    local pids
+    pids=$(pidof smbd 2>/dev/null || pgrep -x smbd 2>/dev/null || ps -ef | grep '[s]mbd' | awk '{print $2}' || true)
+    if [ -n "$pids" ]; then
+        for pid in $pids; do
+            kill -15 "$pid" 2>/dev/null || true
+        done
+    fi
+
+    # 4. 轮询等待进程平稳退出 (最多等 2 秒)
+    local count=0
+    while pidof smbd >/dev/null 2>&1; do
+        sleep 0.5
+        count=$((count + 1))
+        if [ "$count" -ge 4 ]; then
+            # 超过 2 秒仍未退出，执行强杀 (SIGKILL -9)
+            if command -v pkill >/dev/null 2>&1; then
+                pkill -9 -x smbd 2>/dev/null || true
+            fi
+            if command -v killall >/dev/null 2>&1; then
+                killall -9 smbd 2>/dev/null || true
+            fi
+            pids=$(pidof smbd 2>/dev/null || pgrep -x smbd 2>/dev/null || ps -ef | grep '[s]mbd' | awk '{print $2}' || true)
+            if [ -n "$pids" ]; then
+                for pid in $pids; do
+                    kill -9 "$pid" 2>/dev/null || true
+                done
+            fi
+            if [ -n "$port" ] && command -v fuser >/dev/null 2>&1; then
+                fuser -k -9 -n tcp "$port" 2>/dev/null || true
+            fi
+            break
+        fi
+    done
+
+    # 5. 清理残留的死锁 PID 文件
+    rm -f /run/samba/smbd.pid /var/run/samba/smbd.pid /var/run/smbd.pid 2>/dev/null || true
+}
+
 # 安装依赖与 Samba 软件包
 function install_packages {
     log info "正在检查并安装 Samba 及 Bonjour 广播依赖包..."
@@ -273,12 +338,12 @@ function install_packages {
         debian)
             export DEBIAN_FRONTEND=noninteractive
             apt-get update -y
-            apt-get install -y samba samba-common-bin smbclient procps avahi-daemon
+            apt-get install -y samba samba-common-bin smbclient procps psmisc net-tools avahi-daemon
             ;;
         redhat)
             $PKG_MGR makecache -y || true
             $PKG_MGR install -y epel-release || true
-            $PKG_MGR install -y samba samba-common samba-client procps-ng avahi policycoreutils-python-utils || \
+            $PKG_MGR install -y samba samba-common samba-client procps-ng psmisc net-tools avahi policycoreutils-python-utils || \
             $PKG_MGR install -y samba samba-common samba-client procps-ng avahi policycoreutils-python || \
             $PKG_MGR install -y samba samba-common samba-client procps-ng avahi || \
             $PKG_MGR install -y samba samba-common samba-client procps-ng
@@ -499,6 +564,8 @@ function do_setport {
     base_dir="$(get_base_share_dir)"
     configure_selinux "$base_dir" "$new_port"
 
+    # 先彻底清场旧端口残留进程，防止新端口启动冲突
+    kill_smbd_processes "$current_port"
     # 重启服务
     service_control restart
 
@@ -679,17 +746,41 @@ EOF_SYS
 # Short-Description: Start Samba daemon
 ### END INIT INFO
 
+stop_smbd() {
+    pkill -15 -x smbd 2>/dev/null || true
+    killall -15 smbd 2>/dev/null || true
+    pids=$(pidof smbd 2>/dev/null || ps -ef | grep '[s]mbd' | awk '{print $2}' || true)
+    if [ -n "$pids" ]; then
+        for pid in $pids; do
+            kill -15 "$pid" 2>/dev/null || true
+        done
+    fi
+    sleep 0.5
+    if pidof smbd >/dev/null 2>&1; then
+        pkill -9 -x smbd 2>/dev/null || true
+        killall -9 smbd 2>/dev/null || true
+        pids=$(pidof smbd 2>/dev/null || ps -ef | grep '[s]mbd' | awk '{print $2}' || true)
+        if [ -n "$pids" ]; then
+            for pid in $pids; do
+                kill -9 "$pid" 2>/dev/null || true
+            done
+        fi
+    fi
+    rm -f /run/samba/smbd.pid /var/run/samba/smbd.pid /var/run/smbd.pid 2>/dev/null || true
+}
+
 case "$1" in
     start)
+        rm -f /run/samba/smbd.pid /var/run/samba/smbd.pid 2>/dev/null || true
         smbd -D 2>/dev/null || /usr/sbin/smbd -D
         ;;
     stop)
-        killall smbd 2>/dev/null || true
+        stop_smbd
         ;;
     restart|reload)
-        $0 stop
+        stop_smbd
         sleep 1
-        $0 start
+        smbd -D 2>/dev/null || /usr/sbin/smbd -D
         ;;
     status)
         pidof smbd >/dev/null && echo "samba is running" || echo "samba is stopped"
@@ -738,10 +829,20 @@ function service_control {
     local action="$1"
     local mgr
     mgr=$(detect_service_manager)
+    local current_port
+    current_port="$(get_current_port)"
 
     case "$action" in
         start)
             log info "正在启动 Samba 服务..."
+            # 检查是否有僵死 pid 文件，有则清理
+            if [ -f /run/samba/smbd.pid ]; then
+                local old_pid
+                old_pid=$(cat /run/samba/smbd.pid 2>/dev/null)
+                if [ -n "$old_pid" ] && ! kill -0 "$old_pid" 2>/dev/null; then
+                    rm -f /run/samba/smbd.pid 2>/dev/null || true
+                fi
+            fi
             if [ "$mgr" = "systemd" ]; then
                 systemctl start "${UNIFIED_SERVICE_NAME}" 2>/dev/null || systemctl start "$SYS_SERVICE_NAME" 2>/dev/null || smbd -D
             elif [ "$mgr" = "sysvinit" ]; then
@@ -754,24 +855,18 @@ function service_control {
             ;;
         stop)
             log info "正在停止 Samba 服务..."
-            if [ "$mgr" = "systemd" ]; then
-                systemctl stop "${UNIFIED_SERVICE_NAME}" 2>/dev/null || systemctl stop "$SYS_SERVICE_NAME" 2>/dev/null || killall smbd 2>/dev/null || true
-            elif [ "$mgr" = "sysvinit" ]; then
-                service "${UNIFIED_SERVICE_NAME}" stop 2>/dev/null || service "$SYS_SERVICE_NAME" stop 2>/dev/null || "$SYSVINIT_FILE" stop 2>/dev/null || killall smbd 2>/dev/null || true
-            else
-                killall smbd 2>/dev/null || true
-            fi
+            kill_smbd_processes "$current_port"
             log info "Samba 服务已停止。"
             ;;
         restart)
             log info "正在重启 Samba 服务..."
+            kill_smbd_processes "$current_port"
+            sleep 1
             if [ "$mgr" = "systemd" ]; then
-                systemctl restart "${UNIFIED_SERVICE_NAME}" 2>/dev/null || systemctl restart "$SYS_SERVICE_NAME" 2>/dev/null || { killall smbd 2>/dev/null || true; sleep 1; smbd -D; }
+                systemctl restart "${UNIFIED_SERVICE_NAME}" 2>/dev/null || systemctl start "${UNIFIED_SERVICE_NAME}" 2>/dev/null || smbd -D
             elif [ "$mgr" = "sysvinit" ]; then
-                service "${UNIFIED_SERVICE_NAME}" restart 2>/dev/null || service "$SYS_SERVICE_NAME" restart 2>/dev/null || { killall smbd 2>/dev/null || true; sleep 1; smbd -D; }
+                service "${UNIFIED_SERVICE_NAME}" start 2>/dev/null || service "$SYS_SERVICE_NAME" start 2>/dev/null || "$SYSVINIT_FILE" start 2>/dev/null || smbd -D
             else
-                killall smbd 2>/dev/null || true
-                sleep 1
                 smbd -D
             fi
             sleep 1
@@ -948,6 +1043,7 @@ function do_passwd {
 # 彻底卸载流程
 function do_uninstall {
     log warn "正在执行 Samba 服务彻底卸载..."
+    kill_smbd_processes || true
     service_control stop || true
     unregister_service || true
 
