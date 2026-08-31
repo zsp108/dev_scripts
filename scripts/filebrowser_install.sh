@@ -499,7 +499,7 @@ function init_filebrowser_config {
         "$INSTALL_BIN" config init -d "$DB_FILE" >> "$logfile" 2>&1
     fi
 
-    # 解除最小密码长度限制并初始化系统配置
+    # 解除最小密码长度限制并初始化系统配置 (开启命令执行权限 --disableExec=false)
     "$INSTALL_BIN" config set -d "$DB_FILE" \
         --minimumPasswordLength 1 \
         --address "0.0.0.0" \
@@ -507,6 +507,16 @@ function init_filebrowser_config {
         --root "$root_dir" \
         --log "$LOG_PATH" \
         --locale "zh-cn" \
+        --disableExec=false \
+        --branding.name "云端文件管理器" >> "$logfile" 2>&1 || \
+    "$INSTALL_BIN" config set -d "$DB_FILE" \
+        --minimumPasswordLength 1 \
+        --address "0.0.0.0" \
+        --port "$port" \
+        --root "$root_dir" \
+        --log "$LOG_PATH" \
+        --locale "zh-cn" \
+        --disable-exec=false \
         --branding.name "云端文件管理器" >> "$logfile" 2>&1
 
     log info "正在配置默认管理员账户 (admin)..."
@@ -517,9 +527,9 @@ function init_filebrowser_config {
     while [ "$set_pwd_success" = false ]; do
         local err_output
         if "$INSTALL_BIN" users ls -d "$DB_FILE" 2>/dev/null | grep -qw "admin"; then
-            err_output=$("$INSTALL_BIN" users update admin -p "$curr_pass" --perm.admin=true --scope "." -d "$DB_FILE" 2>&1 || true)
+            err_output=$("$INSTALL_BIN" users update admin -p "$curr_pass" --perm.admin=true --perm.execute=true --scope "." -d "$DB_FILE" 2>&1 || true)
         else
-            err_output=$("$INSTALL_BIN" users add admin "$curr_pass" --perm.admin=true --scope "." -d "$DB_FILE" 2>&1 || true)
+            err_output=$("$INSTALL_BIN" users add admin "$curr_pass" --perm.admin=true --perm.execute=true --scope "." -d "$DB_FILE" 2>&1 || true)
         fi
 
         if [[ "$err_output" == *"Error:"* ]]; then
@@ -701,7 +711,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=-${ENV_FILE}
-ExecStart=${INSTALL_BIN} -d ${DB_FILE}
+ExecStart=${INSTALL_BIN} -d ${DB_FILE} --disableExec=false
 Restart=always
 RestartSec=3s
 StandardOutput=journal
@@ -816,7 +826,7 @@ function service_control {
             else
                 case "$action" in
                     start)
-                        nohup "$INSTALL_BIN" -d "$DB_FILE" >> "$LOG_PATH" 2>&1 &
+                        nohup "$INSTALL_BIN" -d "$DB_FILE" --disableExec=false >> "$LOG_PATH" 2>&1 &
                         echo $! > "$PID_FILE"
                         log info "FileBrowser 已在后台启动。"
                         ;;
@@ -829,7 +839,7 @@ function service_control {
                         stop_filebrowser_processes
                         rm -f "$PID_FILE"
                         sleep 1
-                        nohup "$INSTALL_BIN" -d "$DB_FILE" >> "$LOG_PATH" 2>&1 &
+                        nohup "$INSTALL_BIN" -d "$DB_FILE" --disableExec=false >> "$LOG_PATH" 2>&1 &
                         echo $! > "$PID_FILE"
                         log info "FileBrowser 已重启。"
                         ;;
@@ -913,7 +923,7 @@ function resume_service_if_was_running {
                 if [ -f "$SYSVINIT_FILE" ]; then
                     "$SYSVINIT_FILE" start >/dev/null 2>&1 || true
                 else
-                    nohup "$INSTALL_BIN" -d "$DB_FILE" >> "$LOG_PATH" 2>&1 &
+                    nohup "$INSTALL_BIN" -d "$DB_FILE" --disableExec=false >> "$LOG_PATH" 2>&1 &
                     echo $! > "$PID_FILE"
                 fi
                 ;;

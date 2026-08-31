@@ -5,8 +5,10 @@
 1. **自动感知与跨服务 Host 复用**：
    - 自动探测内网 IP 与云服务器 ECS 公网 IP；
    - **智能复用 Samba 设置**：若本机已通过 `samba_install.sh` 配置过自定义公网 IP 或域名，FileBrowser 会自动识别并将其作为默认推荐，无需重复输入！
-2. **多用户严格 Scope 隔离**：支持为每个用户分配独立的物理目录，普通用户只能在自己的 Scope 目录下读写，超级管理员 `admin` 可纵览全局。
-3. **独立服务托管**：自动适配 systemd 或 SysVinit 注册系统自启服务。
+2. **命令执行权限全开启 (`--disableExec=false`)**：
+   - 默认开启 Web 终端与命令执行权限（Command Runner），支持在 Web 界面运行自定义脚本与操作。
+3. **多用户严格 Scope 隔离**：支持为每个用户分配独立的物理目录，普通用户只能在自己的 Scope 目录下读写，超级管理员 `admin` 可纵览全局。
+4. **独立服务托管**：自动适配 systemd 或 SysVinit 注册系统自启服务。
 
 ---
 
@@ -22,7 +24,7 @@ sudo ./scripts/filebrowser_install.sh
 支持传入 `--host` 参数直接指定服务器公网 IP 或域名：
 ```bash
 # 格式：sudo ./scripts/filebrowser_install.sh install [全局根目录] [端口] [管理员密码] [DB路径] [--host IP或域名]
-sudo ./scripts/filebrowser_install.sh install /personal/samba 8080 MyAdminPass123 /etc/filebrowser/filebrowser.db --host 123.56.78.90
+sudo ./scripts/filebrowser_install.sh install /personal/samba 50002 "Admin@123456" /personal/filebrowser/filebrowser.db --host rmlb1495562.bohrium.tech
 ```
 
 ### 3. 多用户管理与 Scope 隔离
@@ -43,7 +45,7 @@ sudo ./scripts/filebrowser_install.sh deluser alice
 ### 4. 服务启停与端口/域名修改
 ```bash
 # 修改 Web 监听端口
-sudo ./scripts/filebrowser_install.sh setport 8088
+sudo ./scripts/filebrowser_install.sh setport 50002
 
 # 查看运行状态
 sudo ./scripts/filebrowser_install.sh status

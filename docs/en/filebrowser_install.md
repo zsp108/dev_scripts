@@ -5,8 +5,10 @@ This is an automated deployment and multi-user isolation management script for F
 1. **Smart Host Detection & Cross-Service Reuse**:
    - Automatically detects private IPs and Cloud ECS public IPs;
    - **Seamless Samba Integration**: If a custom IP or domain was already configured via `samba_install.sh`, FileBrowser automatically detects and defaults to it without manual re-entry!
-2. **Multi-User Scope Isolation**: Allows assigning dedicated root directories (scopes) for individual users, while admin has full global view.
-3. **Service Management**: Automatically registers and manages systemd or SysVinit background daemon.
+2. **Command Execution Enabled (`--disableExec=false`)**:
+   - Web command execution and script runner capabilities are fully enabled by default.
+3. **Multi-User Scope Isolation**: Allows assigning dedicated root directories (scopes) for individual users, while admin has full global view.
+4. **Service Management**: Automatically registers and manages systemd or SysVinit background daemon.
 
 ---
 
@@ -21,7 +23,7 @@ sudo ./scripts/filebrowser_install.sh
 ### 2. CLI Fast Installation with Custom Host
 ```bash
 # Syntax: sudo ./scripts/filebrowser_install.sh install [root_dir] [port] [admin_pass] [db_path] [--host <ip/domain>]
-sudo ./scripts/filebrowser_install.sh install /personal/samba 8080 MyAdminPass123 /etc/filebrowser/filebrowser.db --host 123.56.78.90
+sudo ./scripts/filebrowser_install.sh install /personal/samba 50002 "Admin@123456" /personal/filebrowser/filebrowser.db --host rmlb1495562.bohrium.tech
 ```
 
 ### 3. User Management & Scope Isolation
