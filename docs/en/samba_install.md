@@ -7,39 +7,24 @@ This is a comprehensive automated deployment script for Samba multi-user isolate
    - **Local Fast Disks (ext4/xfs/btrfs)**: Uses **Native xattr Stream Template**, storing macOS tags/metadata inside inodes without generating `._` auxiliary hidden files.
    - **NFS / Cloud NAS / Virtual Shares**: Automatically detects and switches to **Netatalk Compatible Template**, eliminating macOS 100093 extended attribute errors.
 3. **Custom Port Support**: Allows configuring custom listening ports (e.g., 5001, 50001) to bypass ISP 445 port blocks.
-4. **Cloud ECS & Public IP / Domain Support**: Automatically detects private and public IPs with interactive confirmation.
+4. **Cloud ECS & Public IP / Domain Support**: Automatically detects private and public IPs with interactive confirmation and seamless reuse with `filebrowser_install.sh`.
 5. **macOS Bonjour (mDNS) Broadcast**: Enables Avahi auto-discovery in macOS Finder sidebar.
 
 ---
 
-## Usage Examples
+## Cross-Platform Mounting Guide
 
-### 1. Interactive Menu (Recommended)
-Run the script directly to open the management panel with guided setup:
-```bash
-sudo ./scripts/samba_install.sh
+### 🍏 macOS Finder
+- Shortcut `⌘ + K` ➔ Enter `smb://<ip_or_domain>:50001/<username>` ➔ Connect with credentials.
+
+### 🪟 Windows Explorer (Custom Port Forwarding)
+```cmd
+netsh interface portproxy add v4tov4 listenaddress=127.0.0.1 listenport=445 connectaddress=<ip_or_domain> connectport=50001
 ```
+Then press `Win + R` and enter `\\127.0.0.1\<username>`.
 
-### 2. CLI Fast Installation with Custom Host
+### 🐧 Linux CIFS
 ```bash
-# Syntax: sudo ./scripts/samba_install.sh install [base_dir] [port] [username] [password] [--host <ip/domain>]
-sudo ./scripts/samba_install.sh install /personal/samba 50001 spz MyPassword123 --host 123.56.78.90
+sudo mount -t cifs //<ip_or_domain>/<username> /mnt/samba -o port=50001,username=<username>,password='<password>',vers=3.0,uid=$(id -u),gid=$(id -g),iocharset=utf8
 ```
-
-### 3. User & Port Management
-```bash
-# Add a private user disk
-sudo ./scripts/samba_install.sh adduser alice AlicePassword
-
-# Change user password
-sudo ./scripts/samba_install.sh passwd alice NewPassword
-
-# List configured users
-sudo ./scripts/samba_install.sh list
-
-# Change listening port
-sudo ./scripts/samba_install.sh setport 50001
-
-# View cross-platform connection guide
-sudo ./scripts/samba_install.sh guide spz
-```
+*(Note: If Linux CIFS reports "No route to host" with custom domain names, connect directly using the server IP)*

@@ -7,7 +7,7 @@
    - **本地物理盘 / 高性能云盘（ext4/xfs/btrfs）**：自动启用 **xattr 原生扩展属性模板**，macOS 标签/元数据直接写入 inode，目录下不产生任何 `._` 辅助隐藏文件；
    - **网络文件系统 / 阿里云 NAS / NFS 卷**：自动检测并启用 **Netatalk 高兼容模板**，彻底杜绝 macOS 写入时报 100093 扩展属性错误。
 3. **自定义端口支持**：能够突破运营商对 445 端口的封锁，支持自定义监听端口（如 5001 / 50001 / 10445 等）。
-4. **ECS 云服务器与多 IP 智能感知**：自动探测内网 IP 与公网外网 IP，支持在安装过程中手动确认或自定义输入云服务器公网 IP / 域名。
+4. **ECS 云服务器与多 IP 智能感知**：自动探测内网 IP 与公网外网 IP，支持在安装过程中手动确认或自定义输入云服务器公网 IP / 域名，并支持与 `filebrowser_install.sh` 跨脚本自动复用。
 5. **macOS Bonjour 局域网广播**：配置 Avahi 自动广播服务，支持在 macOS 访达侧边栏直接发现与连接。
 
 ---
@@ -67,5 +67,6 @@ sudo ./scripts/samba_install.sh guide spz
 
 ### 🐧 Linux CIFS
 ```bash
-sudo mount -t cifs //<服务器IP或域名>/<用户名> /mnt/samba -o port=50001,username=<用户名>,password=<密码>,uid=$(id -u),gid=$(id -g),iocharset=utf8
+sudo mount -t cifs //<服务器IP或域名>/<用户名> /mnt/samba -o port=50001,username=<用户名>,password='<密码>',vers=3.0,uid=$(id -u),gid=$(id -g),iocharset=utf8
 ```
+*(提示: 若 Linux 客户端使用域名挂载遇阻出现 "No route to host"，请直接使用服务器 IP 挂载)*

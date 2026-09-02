@@ -1010,16 +1010,17 @@ function print_mount_guide {
     echo -e "   • 临时挂载命令:"
     echo -e "     \033[32msudo mkdir -p /mnt/samba_${target_user}\033[0m"
     if [ "$port" = "445" ]; then
-        echo -e "     \033[32msudo mount -t cifs //${SERVER_HOST}/${target_user} /mnt/samba_${target_user} -o username=${target_user},password=<密码>,uid=\$(id -u),gid=\$(id -g),iocharset=utf8\033[0m"
+        echo -e "     \033[32msudo mount -t cifs //${SERVER_HOST}/${target_user} /mnt/samba_${target_user} -o username=${target_user},password='<密码>',vers=3.0,uid=\$(id -u),gid=\$(id -g),iocharset=utf8\033[0m"
     else
-        echo -e "     \033[32msudo mount -t cifs //${SERVER_HOST}/${target_user} /mnt/samba_${target_user} -o port=${port},username=${target_user},password=<密码>,uid=\$(id -u),gid=\$(id -g),iocharset=utf8\033[0m"
+        echo -e "     \033[32msudo mount -t cifs //${SERVER_HOST}/${target_user} /mnt/samba_${target_user} -o port=${port},username=${target_user},password='<密码>',vers=3.0,uid=\$(id -u),gid=\$(id -g),iocharset=utf8\033[0m"
     fi
     echo -e "   • 开机自动挂载 (/etc/fstab 追加):"
     if [ "$port" = "445" ]; then
-        echo -e "     \033[32m//${SERVER_HOST}/${target_user}  /mnt/samba_${target_user}  cifs  username=${target_user},password=<密码>,uid=\$(id -u),gid=\$(id -g),iocharset=utf8,_netdev  0  0\033[0m"
+        echo -e "     \033[32m//${SERVER_HOST}/${target_user}  /mnt/samba_${target_user}  cifs  username=${target_user},password='<密码>',vers=3.0,uid=\$(id -u),gid=\$(id -g),iocharset=utf8,_netdev  0  0\033[0m"
     else
-        echo -e "     \033[32m//${SERVER_HOST}/${target_user}  /mnt/samba_${target_user}  cifs  port=${port},username=${target_user},password=<密码>,uid=\$(id -u),gid=\$(id -g),iocharset=utf8,_netdev  0  0\033[0m"
+        echo -e "     \033[32m//${SERVER_HOST}/${target_user}  /mnt/samba_${target_user}  cifs  port=${port},username=${target_user},password='<密码>',vers=3.0,uid=\$(id -u),gid=\$(id -g),iocharset=utf8,_netdev  0  0\033[0m"
     fi
+    echo -e "   • \033[35m(提示: 若 Linux 客户端使用域名遇到 'No route to host'，请直接将域名替换为对应服务器 IP 直连挂载)\033[0m"
     echo -e "\033[36m==============================================================================\033[0m"
     echo ""
 }
