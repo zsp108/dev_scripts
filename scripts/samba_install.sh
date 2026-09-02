@@ -549,8 +549,8 @@ function init_smb_global_conf {
     deadtime = 10
     reset on zero vc = yes
 
-    # 彻底拦截与杜绝 ._ 与 .DS_Store 冗余隐藏文件产生 (保持目录极致纯净)
-    veto files = /._*/.DS_Store/.nfs*/Thumbs.db/
+    # 拦截与清理系统垃圾缓存 (放行 Apple 元数据由 fruit 托管，完美兼容 iOS/iPadOS/macOS 访达)
+    veto files = /.DS_Store/.nfs*/Thumbs.db/
     delete veto files = yes
 
     # macOS 原生兼容模块 (适配 NFS / 本地存储无扩展属性环境)
