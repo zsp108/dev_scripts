@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# 自动安装与卸载 Node.js LTS + npm
+# 自动安装与卸载 Node.js LTS + npm + AI 开发者命令行工具 (@openai/codex, @google/gemini-cli)
 # 用法:
 #   sudo ./nodejs_install.sh [版本号]              # 安装指定版本或 LTS (例如: 20 / 22 / lts)
 #   ./nodejs_install.sh list                     # 列出主流 Node.js LTS 与 Current 版本
@@ -166,8 +166,10 @@ function uninstall_node {
             fi
             ;;
     esac
+    # 清理全局 AI CLI 工具软链接与缓存
+    rm -f /usr/local/bin/codex /usr/bin/codex /usr/local/bin/gemini /usr/bin/gemini 2>/dev/null || true
     rm -rf "$ORIGINAL_HOME/.npm" 2>/dev/null || true
-    log info "Node.js 卸载完成！"
+    log info "Node.js 及相关 AI CLI 工具卸载完成！"
     exit 0
 }
 
@@ -258,3 +260,34 @@ if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
 else
     log error "Node.js 或 npm 未正常安装"
 fi
+
+# 安装常用 AI CLI 工具 (@openai/codex 与 @google/gemini-cli)
+function install_ai_cli_tools {
+    if ! command -v npm >/dev/null 2>&1; then
+        log warn "未检测到 npm，跳过 AI CLI 工具安装。"
+        return 0
+    fi
+
+    log info "开始安装 AI 开发者命令行工具 (@openai/codex, @google/gemini-cli)..."
+
+    # 1. 安装 @openai/codex
+    log info "正在安装 @openai/codex CLI..."
+    if npm install -g @openai/codex@latest >> "$logfile" 2>&1 || npm install -g @openai/codex >> "$logfile" 2>&1; then
+        log info "✅ @openai/codex CLI 安装完成"
+    else
+        log warn "⚠️ @openai/codex 安装失败 (可稍后手动重试: sudo npm install -g @openai/codex)"
+    fi
+
+    # 2. 安装 @google/gemini-cli
+    log info "正在安装 @google/gemini-cli..."
+    if npm install -g @google/gemini-cli@latest >> "$logfile" 2>&1 || npm install -g @google/gemini-cli >> "$logfile" 2>&1; then
+        log info "✅ @google/gemini-cli 安装完成"
+    else
+        log warn "⚠️ @google/gemini-cli 安装失败 (可稍后手动重试: sudo npm install -g @google/gemini-cli)"
+    fi
+}
+
+install_ai_cli_tools
+
+log info "全部安装完成！ 🎉"
+
