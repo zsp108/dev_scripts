@@ -21,6 +21,7 @@ ENV_INIT_SCRIPT            := $(SCRIPTS_DIR)/env_init.sh
 
 # Default versions and arguments
 GO_VERSION   ?= 1.25.3
+NODE_VERSION ?= lts
 GIT_VERSION  ?= 2.42.0
 PB_VERSION   ?= v25.3
 GEN_GO_VER   ?= v1.5.2
@@ -38,7 +39,7 @@ NC     := \033[0m # No Color
 
 .PHONY: help install setup check clean lint test docs \
         install-go uninstall-go list-go-versions \
-        install-nodejs uninstall-nodejs list-nodejs-versions \
+        install-nodejs install-nodejs-ai install-nodejs-codex install-nodejs-gemini uninstall-nodejs list-nodejs-versions \
         install-git uninstall-git list-git-versions \
         install-docker uninstall-docker \
         install-gitlint uninstall-gitlint \
@@ -110,11 +111,41 @@ list-nodejs-versions: ## List Node.js LTS and current releases
 		exit 1; \
 	fi
 
-install-nodejs: ## Install Node.js LTS and npm
-	@printf "$(BLUE)Installing Node.js...$(NC)\n"
+install-nodejs: ## Install Node.js and npm (interactive AI tool prompts, override via NODE_VERSION=22)
+	@printf "$(BLUE)Installing Node.js $(NODE_VERSION)...$(NC)\n"
 	@if [ -f $(NODEJS_INSTALL_SCRIPT) ]; then \
 		chmod +x $(NODEJS_INSTALL_SCRIPT); \
-		sudo ./$(NODEJS_INSTALL_SCRIPT); \
+		sudo ./$(NODEJS_INSTALL_SCRIPT) $(NODE_VERSION); \
+	else \
+		printf "$(RED)Error: Node.js install script not found at $(NODEJS_INSTALL_SCRIPT)$(NC)\n"; \
+		exit 1; \
+	fi
+
+install-nodejs-ai: ## Install Node.js with all AI developer tools (@openai/codex & @google/gemini-cli)
+	@printf "$(BLUE)Installing Node.js $(NODE_VERSION) with AI Developer Tools...$(NC)\n"
+	@if [ -f $(NODEJS_INSTALL_SCRIPT) ]; then \
+		chmod +x $(NODEJS_INSTALL_SCRIPT); \
+		sudo ./$(NODEJS_INSTALL_SCRIPT) $(NODE_VERSION) --with-ai; \
+	else \
+		printf "$(RED)Error: Node.js install script not found at $(NODEJS_INSTALL_SCRIPT)$(NC)\n"; \
+		exit 1; \
+	fi
+
+install-nodejs-codex: ## Install Node.js with @openai/codex CLI
+	@printf "$(BLUE)Installing Node.js $(NODE_VERSION) with Codex CLI...$(NC)\n"
+	@if [ -f $(NODEJS_INSTALL_SCRIPT) ]; then \
+		chmod +x $(NODEJS_INSTALL_SCRIPT); \
+		sudo ./$(NODEJS_INSTALL_SCRIPT) $(NODE_VERSION) --codex; \
+	else \
+		printf "$(RED)Error: Node.js install script not found at $(NODEJS_INSTALL_SCRIPT)$(NC)\n"; \
+		exit 1; \
+	fi
+
+install-nodejs-gemini: ## Install Node.js with @google/gemini-cli
+	@printf "$(BLUE)Installing Node.js $(NODE_VERSION) with Gemini CLI...$(NC)\n"
+	@if [ -f $(NODEJS_INSTALL_SCRIPT) ]; then \
+		chmod +x $(NODEJS_INSTALL_SCRIPT); \
+		sudo ./$(NODEJS_INSTALL_SCRIPT) $(NODE_VERSION) --gemini; \
 	else \
 		printf "$(RED)Error: Node.js install script not found at $(NODEJS_INSTALL_SCRIPT)$(NC)\n"; \
 		exit 1; \
