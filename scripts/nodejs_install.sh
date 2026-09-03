@@ -173,6 +173,34 @@ function uninstall_node {
     exit 0
 }
 
+# 解析 AI 工具可选参数与开关
+INSTALL_CODEX="prompt"
+INSTALL_GEMINI="prompt"
+POSITIONAL_ARGS=()
+
+for arg in "$@"; do
+    case "$arg" in
+        --codex|--with-codex)
+            INSTALL_CODEX="yes"
+            ;;
+        --gemini|--with-gemini)
+            INSTALL_GEMINI="yes"
+            ;;
+        --with-ai|--all)
+            INSTALL_CODEX="yes"
+            INSTALL_GEMINI="yes"
+            ;;
+        --no-ai|--skip-ai)
+            INSTALL_CODEX="no"
+            INSTALL_GEMINI="no"
+            ;;
+        *)
+            POSITIONAL_ARGS+=("$arg")
+            ;;
+    esac
+done
+set -- "${POSITIONAL_ARGS[@]}"
+
 # 命令分发
 ACTION="${1:-}"
 case "$ACTION" in
@@ -184,9 +212,15 @@ case "$ACTION" in
         ;;
     help|-h|--help)
         echo "用法:"
-        echo "  sudo $0 [20|22|lts]           # 安装指定版本或最新 LTS Node.js"
-        echo "  $0 list                       # 列出官方可用版本"
-        echo "  sudo $0 uninstall             # 卸载 Node.js 及 npm"
+        echo "  sudo $0 [20|22|lts] [--with-ai|--codex|--gemini]  # 安装 Node.js 并可选安装 AI 工具"
+        echo "  $0 list                                          # 列出官方可用版本"
+        echo "  sudo $0 uninstall                                # 卸载 Node.js、npm 及相关工具"
+        echo ""
+        echo "AI 工具参数选项:"
+        echo "  --with-ai / --all   自动安装 @openai/codex 与 @google/gemini-cli"
+        echo "  --codex             仅安装 @openai/codex CLI"
+        echo "  --gemini            仅安装 @google/gemini-cli"
+        echo "  --skip-ai           跳过所有 AI 工具安装"
         exit 0
         ;;
 esac
@@ -261,29 +295,55 @@ else
     log error "Node.js 或 npm 未正常安装"
 fi
 
-# 安装常用 AI CLI 工具 (@openai/codex 与 @google/gemini-cli)
+# 交互式或参数指定安装可选 AI CLI 工具 (@openai/codex 与 @google/gemini-cli)
 function install_ai_cli_tools {
     if ! command -v npm >/dev/null 2>&1; then
-        log warn "未检测到 npm，跳过 AI CLI 工具安装。"
         return 0
     fi
 
-    log info "开始安装 AI 开发者命令行工具 (@openai/codex, @google/gemini-cli)..."
-
-    # 1. 安装 @openai/codex
-    log info "正在安装 @openai/codex CLI..."
-    if npm install -g @openai/codex@latest >> "$logfile" 2>&1 || npm install -g @openai/codex >> "$logfile" 2>&1; then
-        log info "✅ @openai/codex CLI 安装完成"
-    else
-        log warn "⚠️ @openai/codex 安装失败 (可稍后手动重试: sudo npm install -g @openai/codex)"
+    # 1. 询问/判定是否安装 @openai/codex
+    local need_codex="$INSTALL_CODEX"
+    if [ "$need_codex" = "prompt" ]; then
+        if [ -t 0 ]; then
+            echo ""
+            read -r -p "是否需要安装 @openai/codex 命令行工具? [y/N]: " input_c
+            [[ "$input_c" =~ ^[Yy]$ ]] && need_codex="yes" || need_codex="no"
+        else
+            need_codex="no"
+        fi
     fi
 
-    # 2. 安装 @google/gemini-cli
-    log info "正在安装 @google/gemini-cli..."
-    if npm install -g @google/gemini-cli@latest >> "$logfile" 2>&1 || npm install -g @google/gemini-cli >> "$logfile" 2>&1; then
-        log info "✅ @google/gemini-cli 安装完成"
+    if [ "$need_codex" = "yes" ]; then
+        log info "正在安装 @openai/codex CLI..."
+        if npm install -g @openai/codex@latest >> "$logfile" 2>&1 || npm install -g @openai/codex >> "$logfile" 2>&1; then
+            log info "✅ @openai/codex CLI 安装完成"
+        else
+            log warn "⚠️ @openai/codex 安装失败 (可稍后手动重试: sudo npm install -g @openai/codex)"
+        fi
     else
-        log warn "⚠️ @google/gemini-cli 安装失败 (可稍后手动重试: sudo npm install -g @google/gemini-cli)"
+        log info "跳过 @openai/codex 安装。"
+    fi
+
+    # 2. 询问/判定是否安装 @google/gemini-cli
+    local need_gemini="$INSTALL_GEMINI"
+    if [ "$need_gemini" = "prompt" ]; then
+        if [ -t 0 ]; then
+            read -r -p "是否需要安装 @google/gemini-cli 命令行工具? [y/N]: " input_g
+            [[ "$input_g" =~ ^[Yy]$ ]] && need_gemini="yes" || need_gemini="no"
+        else
+            need_gemini="no"
+        fi
+    fi
+
+    if [ "$need_gemini" = "yes" ]; then
+        log info "正在安装 @google/gemini-cli..."
+        if npm install -g @google/gemini-cli@latest >> "$logfile" 2>&1 || npm install -g @google/gemini-cli >> "$logfile" 2>&1; then
+            log info "✅ @google/gemini-cli 安装完成"
+        else
+            log warn "⚠️ @google/gemini-cli 安装失败 (可稍后手动重试: sudo npm install -g @google/gemini-cli)"
+        fi
+    else
+        log info "跳过 @google/gemini-cli 安装。"
     fi
 }
 
